@@ -71,6 +71,9 @@ def load_raceline_csv(path: Path) -> RacelineData:
     if s[-1] <= s[0]:
         raise ValueError("Raceline must have positive longitudinal extent.")
 
+    # The optimizer normally starts s at zero. Normalizing an offset here makes
+    # physical sector positions independent from a CSV writer that retained a
+    # constant s offset.
     s = s - s[0]
     return RacelineData(s_m=s, x_m=x, y_m=y)
 
@@ -123,14 +126,26 @@ def _normalize_splits(values: object, raceline: RacelineData) -> list[float]:
     if not isinstance(values, list):
         raise ValueError("splits_s_m must be a list.")
 
-    indices: set[int] = set()
-    for i, raw in enumerate(values):
-        value = _finite_float(raw, name=f"splits_s_m[{i}]")
-        idx = nearest_waypoint_index_for_s(raceline, value)
-        if 0 < idx < raceline.n_points - 1:
-            indices.add(idx)
+    raw_values = [
+        _finite_float(raw, name=f"splits_s_m[{i}]")
+        for i, raw in enumerate(values)
+    ]
+    if any(b <= a for a, b in zip(raw_values, raw_values[1:])):
+        raise ValueError("splits_s_m must be strictly increasing.")
 
-    return [float(raceline.s_m[i]) for i in sorted(indices)]
+    indices: list[int] = []
+    for value in raw_values:
+        idx = nearest_waypoint_index_for_s(raceline, value)
+        if not 0 < idx < raceline.n_points - 1:
+            raise ValueError("Sector splits must map to interior waypoints, not start/end.")
+        if indices and idx <= indices[-1]:
+            raise ValueError(
+                "Adjacent sector splits collapse to the same waypoint after resampling; "
+                "move them farther apart."
+            )
+        indices.append(idx)
+
+    return [float(raceline.s_m[i]) for i in indices]
 
 
 def _resize_settings(settings: object, count: int, default_factory) -> list[dict]:
@@ -238,6 +253,8 @@ def legacy_sector_ranges(n_points: int, split_indices: Iterable[int]) -> list[tu
             raise ValueError("split indices must form non-empty ordered sectors.")
         ranges.append((start, split))
         start = split + 1
+    # Keep the original sector_slicer convention: the final end is len(wpnts),
+    # used as a sentinel by the ROS runtime code.
     ranges.append((start, n_points))
     return ranges
 
