@@ -1,6 +1,6 @@
 [project]
 name = "f1tenth-raceline-offline"
-version = "0.2.2"
+version = "0.3.0"
 description = "ROS-free F1TENTH global raceline generator extracted from ssupath-f1tenth-race-stack"
 readme = "README.md"
 requires-python = ">=3.10,<3.11"
@@ -29,6 +29,7 @@ build-backend = "hatchling.build"
 include = [
     "src/f1tenth_raceline/**/*.py",
     "src/f1tenth_raceline/web/index.html",
+    "src/f1tenth_raceline/web/editor.js",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -36,3 +37,8 @@ packages = ["src/f1tenth_raceline"]
 
 [tool.uv]
 package = true
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.2",
+]

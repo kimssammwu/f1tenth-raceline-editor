@@ -3,280 +3,79 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>F1TENTH Map Editor</title>
+  <title>F1TENTH Raceline Editor</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; background: #101318; color: #e8edf2; }
-    header { padding: 14px 18px; border-bottom: 1px solid #303640; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-    header strong { margin-right: auto; }
+    header { padding: 12px 16px; border-bottom: 1px solid #303640; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    header strong { margin-right: 10px; }
     button, input { font: inherit; }
-    button { background: #222831; color: #e8edf2; border: 1px solid #414955; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+    button { background: #222831; color: #e8edf2; border: 1px solid #414955; border-radius: 8px; padding: 8px 11px; cursor: pointer; }
     button.active { background: #d7e8ff; color: #101318; border-color: #d7e8ff; }
-    button:disabled { opacity: .45; cursor: default; }
-    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 14px; padding: 14px; }
-    .viewport { overflow: auto; border: 1px solid #303640; background: #090b0e; min-height: 500px; position: relative; }
+    button:disabled { opacity: .4; cursor: default; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; padding: 14px; }
+    .viewport { overflow: auto; border: 1px solid #303640; background: #090b0e; min-height: 560px; position: relative; }
     .stage { position: relative; transform-origin: top left; width: max-content; height: max-content; }
     canvas { display: block; image-rendering: pixelated; }
-    #overlay { position: absolute; inset: 0; cursor: crosshair; }
-    aside { border: 1px solid #303640; border-radius: 10px; padding: 14px; align-self: start; background: #171b21; }
+    #overlay { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
+    aside { border: 1px solid #303640; border-radius: 10px; padding: 14px; align-self: start; background: #171b21; max-height: calc(100vh - 95px); overflow: auto; }
     .group { margin-bottom: 18px; }
     .group h3 { margin: 0 0 9px; font-size: 14px; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; }
     label { display: block; font-size: 13px; color: #aab4c0; margin-bottom: 6px; }
-    input[type=range] { width: 100%; }
+    input[type=range], input[type=number] { width: 100%; }
+    input[type=number] { background:#0e1116; color:#e8edf2; border:1px solid #414955; border-radius:6px; padding:6px 7px; }
     code { display: block; white-space: pre-wrap; word-break: break-all; background: #0e1116; padding: 9px; border-radius: 7px; color: #bcd6ff; font-size: 12px; }
-    #status { min-height: 42px; color: #aab4c0; font-size: 13px; white-space: pre-wrap; }
+    #status, #sectorStatus { min-height: 34px; color: #aab4c0; font-size: 13px; white-space: pre-wrap; }
     .legend { display: grid; grid-template-columns: 18px 1fr; gap: 6px 8px; align-items: center; font-size: 13px; color: #aab4c0; }
     .swatch { width: 18px; height: 5px; border-radius: 9px; }
     .free { background: #4aa3ff; }.occupied { background: #ff5b69; }.center { background: #42e29c; }
-    @media (max-width: 850px) { .layout { grid-template-columns: 1fr; } aside { order: -1; } }
+    .sector-card { border:1px solid #303640; border-radius:8px; padding:9px; margin:8px 0; background:#11151a; }
+    .sector-card .title { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:7px; font-size:13px; }
+    .sector-card .meta { color:#8f9aa6; font-size:12px; margin-bottom:7px; }
+    .field-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+    .check-row { display:flex; gap:12px; flex-wrap:wrap; margin-top:7px; color:#b8c1cb; font-size:12px; }
+    .check-row label { display:flex; align-items:center; gap:5px; margin:0; }
+    .warnings { font-size:12px; display:grid; gap:6px; }
+    .warning { border-left:3px solid #d2a84a; padding:5px 7px; background:#1e1a12; }
+    .error { border-left-color:#ff5b69; background:#251316; }
+    .hint { color:#8f9aa6; font-size:12px; line-height:1.45; }
+    .hidden { display:none !important; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } aside { order: -1; max-height:none; } }
   </style>
 </head>
 <body>
 <header>
-  <strong>F1TENTH Map Editor</strong>
-  <button id="freeBtn" class="active">Free brush</button>
-  <button id="occupiedBtn">Occupied brush</button>
+  <strong>F1TENTH Raceline Editor</strong>
+  <button id="mapModeBtn" class="active">Map edit</button>
+  <button id="speedModeBtn" disabled>Speed sectors</button>
+  <button id="otModeBtn" disabled>Overtaking sectors</button>
+  <span style="flex:1"></span>
   <button id="undoBtn">Undo</button>
   <button id="redoBtn">Redo</button>
-  <button id="clearBtn">Clear edits</button>
 </header>
 <div class="layout">
-  <div class="viewport" id="viewport">
-    <div class="stage" id="stage">
-      <canvas id="base"></canvas>
-      <canvas id="overlay"></canvas>
-    </div>
-  </div>
+  <div class="viewport" id="viewport"><div class="stage" id="stage"><canvas id="base"></canvas><canvas id="overlay"></canvas></div></div>
   <aside>
-    <div class="group">
-      <h3>Brush</h3>
-      <label for="radius">Radius: <span id="radiusValue">10</span> px</label>
-      <input id="radius" type="range" min="1" max="80" value="10">
+    <div id="mapPanel">
+      <div class="group"><h3>Map brush</h3><div class="row"><button id="freeBtn" class="active">Free brush</button><button id="occupiedBtn">Occupied brush</button><button id="clearBtn">Clear edits</button></div><label for="radius" style="margin-top:9px">Radius: <span id="radiusValue">10</span> px</label><input id="radius" type="range" min="1" max="80" value="10"></div>
+      <div class="group"><h3>Centerline preview</h3><div class="row"><button id="previewBtn">Recompute</button><button id="toggleCenterBtn">Hide centerline</button></div></div>
+      <div class="group"><h3>Save map edits</h3><button id="saveBtn">Save map_edit.json</button><div id="status"></div></div>
+      <div class="group"><h3>Generate command</h3><code id="generateCommand">loading...</code></div>
+      <div class="group legend"><span class="swatch free"></span><span>Force free space</span><span class="swatch occupied"></span><span>Force occupied</span><span class="swatch center"></span><span>Centerline preview</span></div>
     </div>
-    <div class="group">
-      <h3>View</h3>
-      <label for="zoom">Zoom: <span id="zoomValue">100</span>%</label>
-      <input id="zoom" type="range" min="25" max="300" step="25" value="100">
+    <div id="sectorPanel" class="hidden">
+      <div class="group"><h3 id="sectorTitle">Sectors</h3><div class="hint">Click the minimum-curvature raceline to add a split. Sector locations are stored in meters (s_m), then exported to the legacy waypoint-index YAML schema.</div></div>
+      <div id="speedGlobals" class="group hidden"><h3>Speed settings</h3><label>Global limit<input id="globalLimit" type="number" min="0" max="1" step="0.01"></label></div>
+      <div id="otGlobals" class="group hidden"><h3>Overtaking settings</h3><div class="field-grid"><label>Yeet factor<input id="yeetFactor" type="number" min="0.01" step="0.05"></label><label>Spline len [wp]<input id="splineLen" type="number" min="1" step="1"></label></div><label style="margin-top:7px">OT sector begin<input id="otSectorBegin" type="number" min="0" max="1" step="0.05"></label></div>
+      <div class="group"><div class="row"><button id="saveSectorsBtn">Save + export YAML</button><button id="refreshSectorsBtn">Reload raceline</button></div><div id="sectorStatus"></div></div>
+      <div class="group"><h3>Sector list</h3><div id="sectorList"></div></div>
+      <div class="group"><h3>Validation</h3><div id="warningList" class="warnings"></div></div>
     </div>
-    <div class="group">
-      <h3>Preview</h3>
-      <div class="row">
-        <button id="previewBtn">Recompute centerline</button>
-        <button id="toggleCenterBtn">Hide centerline</button>
-      </div>
-    </div>
-    <div class="group">
-      <h3>Save</h3>
-      <div class="row">
-        <button id="saveBtn">Save map_edit.json</button>
-      </div>
-      <div id="status"></div>
-    </div>
-    <div class="group">
-      <h3>Generate command</h3>
-      <code id="generateCommand">loading...</code>
-    </div>
-    <div class="group legend">
-      <span class="swatch free"></span><span>Force free space</span>
-      <span class="swatch occupied"></span><span>Force occupied</span>
-      <span class="swatch center"></span><span>Centerline preview</span>
-    </div>
+    <div class="group"><h3>View</h3><label for="zoom">Zoom: <span id="zoomValue">100</span>%</label><input id="zoom" type="range" min="25" max="300" step="25" value="100"></div>
   </aside>
 </div>
-<script>
-(() => {
-  const base = document.getElementById('base');
-  const overlay = document.getElementById('overlay');
-  const bctx = base.getContext('2d', { alpha: false });
-  const octx = overlay.getContext('2d');
-  const stage = document.getElementById('stage');
-  const status = document.getElementById('status');
-  const radius = document.getElementById('radius');
-  const radiusValue = document.getElementById('radiusValue');
-  const zoom = document.getElementById('zoom');
-  const zoomValue = document.getElementById('zoomValue');
-  const freeBtn = document.getElementById('freeBtn');
-  const occupiedBtn = document.getElementById('occupiedBtn');
-  const undoBtn = document.getElementById('undoBtn');
-  const redoBtn = document.getElementById('redoBtn');
-  const clearBtn = document.getElementById('clearBtn');
-  const previewBtn = document.getElementById('previewBtn');
-  const toggleCenterBtn = document.getElementById('toggleCenterBtn');
-  const saveBtn = document.getElementById('saveBtn');
-  const generateCommand = document.getElementById('generateCommand');
-
-  let tool = 'free';
-  let operations = [];
-  let redoStack = [];
-  let currentStroke = null;
-  let centerline = [];
-  let showCenterline = true;
-  let img = new Image();
-  let previewTimer = null;
-
-  function profile() {
-    return { version: 1, operations };
-  }
-
-  function setStatus(text, error = false) {
-    status.textContent = text;
-    status.style.color = error ? '#ff8d97' : '#aab4c0';
-  }
-
-  function updateButtons() {
-    undoBtn.disabled = operations.length === 0;
-    redoBtn.disabled = redoStack.length === 0;
-    freeBtn.classList.toggle('active', tool === 'free');
-    occupiedBtn.classList.toggle('active', tool === 'occupied');
-  }
-
-  function drawStroke(ctx, op, alpha = 0.52) {
-    if (!op.points.length) return;
-    const color = op.tool === 'free' ? `rgba(74,163,255,${alpha})` : `rgba(255,91,105,${alpha})`;
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = op.radius * 2;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(op.points[0][0], op.points[0][1]);
-    for (const p of op.points.slice(1)) ctx.lineTo(p[0], p[1]);
-    ctx.stroke();
-    for (const p of [op.points[0], op.points[op.points.length - 1]]) {
-      ctx.beginPath(); ctx.arc(p[0], p[1], op.radius, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.restore();
-  }
-
-  function redraw() {
-    octx.clearRect(0, 0, overlay.width, overlay.height);
-    for (const op of operations) drawStroke(octx, op);
-    if (currentStroke) drawStroke(octx, currentStroke, 0.7);
-    if (showCenterline && centerline.length > 1) {
-      octx.save();
-      octx.strokeStyle = '#42e29c';
-      octx.lineWidth = 2;
-      octx.beginPath();
-      octx.moveTo(centerline[0][0], centerline[0][1]);
-      for (const p of centerline.slice(1)) octx.lineTo(p[0], p[1]);
-      octx.closePath();
-      octx.stroke();
-      octx.restore();
-    }
-    updateButtons();
-  }
-
-  function canvasPoint(evt) {
-    const rect = overlay.getBoundingClientRect();
-    const x = (evt.clientX - rect.left) * overlay.width / rect.width;
-    const y = (evt.clientY - rect.top) * overlay.height / rect.height;
-    return [Math.round(x), Math.round(y)];
-  }
-
-  function schedulePreview() {
-    if (previewTimer) clearTimeout(previewTimer);
-    previewTimer = setTimeout(() => { previewTimer = null; previewCenterline(); }, 350);
-  }
-
-  async function previewCenterline() {
-    setStatus('Recomputing centerline preview...');
-    previewBtn.disabled = true;
-    try {
-      const res = await fetch('/api/preview-centerline', {
-        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(profile())
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'preview failed');
-      centerline = data.points || [];
-      redraw();
-      setStatus(`Centerline preview: ${centerline.length} points`);
-    } catch (e) {
-      centerline = [];
-      redraw();
-      setStatus(`Preview failed: ${e.message}`, true);
-    } finally { previewBtn.disabled = false; }
-  }
-
-  async function save() {
-    setStatus('Saving edit profile...');
-    try {
-      const res = await fetch('/api/save', {
-        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(profile())
-      });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'save failed');
-      setStatus(`Saved ${data.operations} edit strokes.\nUse the command below to generate.`);
-    } catch (e) { setStatus(`Save failed: ${e.message}`, true); }
-  }
-
-  overlay.addEventListener('pointerdown', evt => {
-    overlay.setPointerCapture(evt.pointerId);
-    currentStroke = { tool, radius: Number(radius.value), points: [canvasPoint(evt)] };
-    redoStack = [];
-    redraw();
-  });
-  overlay.addEventListener('pointermove', evt => {
-    if (!currentStroke) return;
-    const p = canvasPoint(evt);
-    const last = currentStroke.points[currentStroke.points.length - 1];
-    if (Math.hypot(p[0]-last[0], p[1]-last[1]) >= 1.5) currentStroke.points.push(p);
-    redraw();
-  });
-  function finishStroke(evt) {
-    if (!currentStroke) return;
-    currentStroke.points.push(canvasPoint(evt));
-    operations.push(currentStroke);
-    currentStroke = null;
-    centerline = [];
-    redraw();
-    schedulePreview();
-  }
-  overlay.addEventListener('pointerup', finishStroke);
-  overlay.addEventListener('pointercancel', () => { currentStroke = null; redraw(); });
-
-  freeBtn.addEventListener('click', () => { tool='free'; updateButtons(); });
-  occupiedBtn.addEventListener('click', () => { tool='occupied'; updateButtons(); });
-  undoBtn.addEventListener('click', () => { if (operations.length) { redoStack.push(operations.pop()); centerline=[]; redraw(); schedulePreview(); } });
-  redoBtn.addEventListener('click', () => { if (redoStack.length) { operations.push(redoStack.pop()); centerline=[]; redraw(); schedulePreview(); } });
-  clearBtn.addEventListener('click', () => { if (operations.length && confirm('Clear all edits?')) { redoStack=[]; operations=[]; centerline=[]; redraw(); schedulePreview(); } });
-  radius.addEventListener('input', () => radiusValue.textContent = radius.value);
-  zoom.addEventListener('input', () => {
-    zoomValue.textContent = zoom.value;
-    const scale = Number(zoom.value) / 100;
-    stage.style.transform = `scale(${scale})`;
-    stage.style.marginRight = `${stage.offsetWidth * (scale - 1)}px`;
-    stage.style.marginBottom = `${stage.offsetHeight * (scale - 1)}px`;
-  });
-  previewBtn.addEventListener('click', previewCenterline);
-  toggleCenterBtn.addEventListener('click', () => {
-    showCenterline = !showCenterline;
-    toggleCenterBtn.textContent = showCenterline ? 'Hide centerline' : 'Show centerline';
-    redraw();
-  });
-  saveBtn.addEventListener('click', save);
-  window.addEventListener('keydown', evt => {
-    if ((evt.ctrlKey || evt.metaKey) && evt.key.toLowerCase() === 'z') {
-      evt.preventDefault();
-      if (evt.shiftKey) redoBtn.click(); else undoBtn.click();
-    }
-  });
-
-  fetch('/api/state').then(r => r.json()).then(state => {
-    operations = state.operations || [];
-    generateCommand.textContent = state.generate_command;
-    img.onload = () => {
-      base.width = overlay.width = state.width;
-      base.height = overlay.height = state.height;
-      bctx.drawImage(img, 0, 0, state.width, state.height);
-      redraw();
-      previewCenterline();
-    };
-    img.src = '/map.png?t=' + Date.now();
-  }).catch(e => setStatus(`Initialization failed: ${e.message}`, true));
-})();
-</script>
+<script src="/editor.js"></script>
 </body>
 </html>
