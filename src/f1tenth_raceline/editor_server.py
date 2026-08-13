@@ -12,9 +12,10 @@ from urllib.parse import urlparse
 import cv2
 import numpy as np
 
-from .core import extract_centerline, smooth_centerline
-from .edit_model import apply_profile, load_base_image, load_profile, normalize_profile, save_profile
+from .core import extract_centerline, generate_racelines, smooth_centerline
+from .edit_model import apply_profile, load_base_image, load_profile, materialize_profile, normalize_profile, save_profile
 from .sectors import export_sector_files, load_raceline_csv, load_sector_profile, validate_sector_profile, world_to_pixel
+from .vendor import UPSTREAM_COMMIT, default_config_dir
 
 
 @dataclass
@@ -41,9 +42,15 @@ def _preview_centerline(state: EditorState, profile: dict) -> list[list[float]]:
     edited = apply_profile(state.base_image, normalized)
     filtered_map = cv2.flip(edited, 0)
     from skimage.morphology import skeletonize
+
     skeleton = skeletonize(filtered_map, method="lee")
     resolution = float(state.map_data["resolution"])
-    centerline = extract_centerline(skeleton=skeleton, cent_length=0.0, map_resolution=resolution, map_editor_mode=True)
+    centerline = extract_centerline(
+        skeleton=skeleton,
+        cent_length=0.0,
+        map_resolution=resolution,
+        map_editor_mode=True,
+    )
     centerline = smooth_centerline(centerline)
     height = edited.shape[0]
     raw = centerline.copy()
@@ -54,7 +61,14 @@ def _preview_centerline(state: EditorState, profile: dict) -> list[list[float]]:
 
 def _world_xy_to_canvas(state: EditorState, x: np.ndarray, y: np.ndarray) -> list[list[float]]:
     origin = state.map_data.get("origin", [0.0, 0.0, 0.0])
-    px, py = world_to_pixel(x, y, resolution=float(state.map_data["resolution"]), origin_x=float(origin[0]), origin_y=float(origin[1]), image_height=int(state.base_image.shape[0]))
+    px, py = world_to_pixel(
+        x,
+        y,
+        resolution=float(state.map_data["resolution"]),
+        origin_x=float(origin[0]),
+        origin_y=float(origin[1]),
+        image_height=int(state.base_image.shape[0]),
+    )
     return [[float(a), float(b)] for a, b in zip(px, py)]
 
 
@@ -83,19 +97,28 @@ def _sector_payload(state: EditorState) -> dict:
     raceline_mtime = iqp_path.stat().st_mtime
     stale_sources = [src for src in (state.image_path, state.profile_path) if src.is_file() and src.stat().st_mtime > raceline_mtime]
     if stale_sources:
-        warnings.append({
-            "severity": "warning",
-            "code": "raceline_stale",
-            "message": "Map/image edits are newer than raceline_iqp.csv. Regenerate the raceline before finalizing sectors: " + ", ".join(str(p) for p in stale_sources),
-        })
+        warnings.append(
+            {
+                "severity": "warning",
+                "code": "raceline_stale",
+                "message": "Map/image edits are newer than raceline_iqp.csv. Regenerate the raceline before finalizing sectors: "
+                + ", ".join(str(p) for p in stale_sources),
+            }
+        )
     iqp_xy = _world_xy_to_canvas(state, raceline.x_m, raceline.y_m)
-    iqp_points = [[float(raceline.s_m[i]), float(iqp_xy[i][0]), float(iqp_xy[i][1]), int(i)] for i in range(raceline.n_points)]
+    iqp_points = [
+        [float(raceline.s_m[i]), float(iqp_xy[i][0]), float(iqp_xy[i][1]), int(i)]
+        for i in range(raceline.n_points)
+    ]
     shortest_points: list[list[float]] = []
     shortest_path = state.raceline_dir / "raceline_shortest.csv"
     if shortest_path.is_file():
         shortest = load_raceline_csv(shortest_path)
         shortest_xy = _world_xy_to_canvas(state, shortest.x_m, shortest.y_m)
-        shortest_points = [[float(shortest.s_m[i]), float(shortest_xy[i][0]), float(shortest_xy[i][1]), int(i)] for i in range(shortest.n_points)]
+        shortest_points = [
+            [float(shortest.s_m[i]), float(shortest_xy[i][0]), float(shortest_xy[i][1]), int(i)]
+            for i in range(shortest.n_points)
+        ]
     bounds: dict[str, list[list[float]]] = {"right": [], "left": []}
     for key, filename in (("right", "bound_right.csv"), ("left", "bound_left.csv")):
         xy = _read_xy_csv(state.raceline_dir / filename)
@@ -118,21 +141,112 @@ def _sector_payload(state: EditorState) -> dict:
     }
 
 
-def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_path: Path | None = None, raceline_dir: Path | None = None, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
+def _save_csv(path: Path, arr: np.ndarray, header: str) -> None:
+    np.savetxt(path, arr, delimiter=",", header=header, comments="", fmt="%.9f")
+
+
+def _generation_options(state: EditorState) -> dict:
+    summary_path = state.raceline_dir / "summary.json"
+    summary: dict = {}
+    if summary_path.is_file():
+        try:
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            summary = {}
+
+    config_value = summary.get("config_dir")
+    config_dir = Path(config_value).expanduser().resolve() if config_value else default_config_dir().resolve()
+    if not config_dir.is_dir():
+        config_dir = default_config_dir().resolve()
+
+    return {
+        "config_dir": config_dir,
+        "safety_width": float(summary.get("safety_width", 0.4)),
+        "safety_width_sp": float(summary.get("safety_width_sp", 0.35)),
+        "reverse": bool(summary.get("reverse", False)),
+    }
+
+
+def _regenerate_racelines(state: EditorState) -> dict:
+    state.raceline_dir.mkdir(parents=True, exist_ok=True)
+    options = _generation_options(state)
+    with materialize_profile(state.map_yaml, state.profile_path) as edited_map:
+        result = generate_racelines(
+            edited_map.yaml_path,
+            config_dir=options["config_dir"],
+            safety_width=options["safety_width"],
+            safety_width_sp=options["safety_width_sp"],
+            reverse=options["reverse"],
+            work_dir=state.raceline_dir / ".work",
+        )
+
+    _save_csv(state.raceline_dir / "centerline.csv", result.centerline_with_width, "x_m,y_m,width_right_m,width_left_m")
+    _save_csv(state.raceline_dir / "raceline_iqp.csv", result.raceline_iqp, "s_m,x_m,y_m,psi_rad,kappa_radpm,vx_mps,ax_mps2")
+    _save_csv(state.raceline_dir / "raceline_shortest.csv", result.raceline_shortest, "s_m,x_m,y_m,psi_rad,kappa_radpm,vx_mps,ax_mps2")
+    _save_csv(
+        state.raceline_dir / "ltpl.csv",
+        result.ltpl,
+        "x_ref_m,y_ref_m,width_right_m,width_left_m,x_normvec_m,y_normvec_m,alpha_m,s_racetraj_m,psi_racetraj_rad,kappa_racetraj_radpm,vx_racetraj_mps,ax_racetraj_mps2",
+    )
+    _save_csv(state.raceline_dir / "bound_right.csv", result.bound_right, "x_m,y_m")
+    _save_csv(state.raceline_dir / "bound_left.csv", result.bound_left, "x_m,y_m")
+
+    summary = {
+        "map": str(state.map_yaml),
+        "edit": str(state.profile_path),
+        "optimizer_commit": UPSTREAM_COMMIT,
+        "config_dir": str(options["config_dir"]),
+        "safety_width": options["safety_width"],
+        "safety_width_sp": options["safety_width_sp"],
+        "reverse": options["reverse"],
+        "estimated_lap_time_iqp_s": result.est_lap_time_iqp,
+        "estimated_lap_time_shortest_s": result.est_lap_time_shortest,
+        "outputs": {
+            "centerline": str(state.raceline_dir / "centerline.csv"),
+            "raceline_iqp": str(state.raceline_dir / "raceline_iqp.csv"),
+            "raceline_shortest": str(state.raceline_dir / "raceline_shortest.csv"),
+            "ltpl": str(state.raceline_dir / "ltpl.csv"),
+            "bound_right": str(state.raceline_dir / "bound_right.csv"),
+            "bound_left": str(state.raceline_dir / "bound_left.csv"),
+        },
+    }
+    (state.raceline_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    return summary
+
+
+def run_editor(
+    map_yaml: Path,
+    profile_path: Path | None = None,
+    sector_profile_path: Path | None = None,
+    raceline_dir: Path | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    open_browser: bool = True,
+) -> None:
     map_yaml = map_yaml.resolve()
     base_image, map_data, image_path = load_base_image(map_yaml)
     profile_path = profile_path.resolve() if profile_path else (map_yaml.parent / "edit" / "map_edit.json").resolve()
     sector_profile_path = sector_profile_path.resolve() if sector_profile_path else (map_yaml.parent / "edit" / "sectors.json").resolve()
     raceline_dir = raceline_dir.resolve() if raceline_dir else (map_yaml.parent / "raceline_offline").resolve()
-    state = EditorState(map_yaml=map_yaml, profile_path=profile_path, sector_profile_path=sector_profile_path, raceline_dir=raceline_dir, base_image=base_image, map_data=map_data, image_path=image_path)
+    state = EditorState(
+        map_yaml=map_yaml,
+        profile_path=profile_path,
+        sector_profile_path=sector_profile_path,
+        raceline_dir=raceline_dir,
+        base_image=base_image,
+        map_data=map_data,
+        image_path=image_path,
+    )
     web_path = Path(__file__).with_name("web") / "index.html"
     html = web_path.read_bytes()
     editor_js = (web_path.parent / "editor.js").read_bytes()
 
     class Handler(BaseHTTPRequestHandler):
-        server_version = "F1TenthRacelineEditor/1.1"
+        server_version = "F1TenthRacelineEditor/1.2"
+
         def log_message(self, fmt: str, *args) -> None:
             print(f"[editor] {self.address_string()} - {fmt % args}")
+
         def send_bytes(self, body: bytes, content_type: str, status: int = 200) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
@@ -140,12 +254,15 @@ def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
+
         def send_json(self, data: object, status: int = 200) -> None:
             self.send_bytes(_json_bytes(data), "application/json; charset=utf-8", status)
+
         def read_json(self) -> dict:
             length = int(self.headers.get("Content-Length", "0"))
             raw = self.rfile.read(length)
             return json.loads(raw.decode("utf-8")) if raw else {}
+
         def do_GET(self) -> None:
             path = urlparse(self.path).path
             if path in {"/", "/index.html"}:
@@ -164,11 +281,18 @@ def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_
             if path == "/api/state":
                 profile = load_profile(state.profile_path, state.map_yaml, state.base_image)
                 h, w = state.base_image.shape[:2]
-                self.send_json({
-                    "map": str(state.map_yaml), "profile": str(state.profile_path), "sector_profile": str(state.sector_profile_path), "raceline_dir": str(state.raceline_dir),
-                    "width": int(w), "height": int(h), "operations": profile["operations"],
-                    "generate_command": f'uv run raceline generate --map "{state.map_yaml}" --edit "{state.profile_path}"',
-                })
+                self.send_json(
+                    {
+                        "map": str(state.map_yaml),
+                        "profile": str(state.profile_path),
+                        "sector_profile": str(state.sector_profile_path),
+                        "raceline_dir": str(state.raceline_dir),
+                        "width": int(w),
+                        "height": int(h),
+                        "operations": profile["operations"],
+                        "generate_command": f'uv run raceline generate --map "{state.map_yaml}" --edit "{state.profile_path}"',
+                    }
+                )
                 return
             if path == "/api/sectors":
                 try:
@@ -177,6 +301,7 @@ def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_
                     self.send_json({"available": False, "message": str(exc)})
                 return
             self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+
         def do_POST(self) -> None:
             path = urlparse(self.path).path
             try:
@@ -188,18 +313,41 @@ def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_
                 if path == "/api/preview-centerline":
                     self.send_json({"ok": True, "points": _preview_centerline(state, payload)})
                     return
+                if path == "/api/regenerate-raceline":
+                    saved = save_profile(state.profile_path, payload, state.map_yaml, state.base_image)
+                    summary = _regenerate_racelines(state)
+                    self.send_json(
+                        {
+                            "ok": True,
+                            "operations": len(saved["operations"]),
+                            "summary": summary,
+                            "sectors": _sector_payload(state),
+                        }
+                    )
+                    return
                 if path == "/api/sectors/validate":
                     raceline = load_raceline_csv(state.raceline_dir / "raceline_iqp.csv")
                     self.send_json({"ok": True, "warnings": validate_sector_profile(payload, raceline)})
                     return
                 if path == "/api/sectors/save":
                     raceline = load_raceline_csv(state.raceline_dir / "raceline_iqp.csv")
-                    exported = export_sector_files(map_dir=state.map_yaml.parent, profile_path=state.sector_profile_path, raceline=raceline, profile=payload)
+                    exported = export_sector_files(
+                        map_dir=state.map_yaml.parent,
+                        profile_path=state.sector_profile_path,
+                        raceline=raceline,
+                        profile=payload,
+                    )
                     saved_profile = load_sector_profile(state.sector_profile_path, raceline)
-                    self.send_json({
-                        "ok": True, "profile": saved_profile, "profile_path": str(exported.profile_path),
-                        "speed_yaml_path": str(exported.speed_yaml_path), "ot_yaml_path": str(exported.ot_yaml_path), "warnings": list(exported.warnings),
-                    })
+                    self.send_json(
+                        {
+                            "ok": True,
+                            "profile": saved_profile,
+                            "profile_path": str(exported.profile_path),
+                            "speed_yaml_path": str(exported.speed_yaml_path),
+                            "ot_yaml_path": str(exported.ot_yaml_path),
+                            "warnings": list(exported.warnings),
+                        }
+                    )
                     return
                 if path == "/api/shutdown":
                     self.send_json({"ok": True})

@@ -1,20 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>F1TENTH Raceline Editor</title>
+  <title>F1TENTH 레이스라인 편집기</title>
   <style>
-    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+    :root { color-scheme: dark; font-family: Inter, "Noto Sans KR", system-ui, sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; background: #101318; color: #e8edf2; }
     header { padding: 12px 16px; border-bottom: 1px solid #303640; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     header strong { margin-right: 10px; }
     button, input { font: inherit; }
     button { background: #222831; color: #e8edf2; border: 1px solid #414955; border-radius: 8px; padding: 8px 11px; cursor: pointer; }
+    button.primary { background: #d7e8ff; color: #101318; border-color: #d7e8ff; }
     button.active { background: #d7e8ff; color: #101318; border-color: #d7e8ff; }
     button:disabled { opacity: .4; cursor: default; }
-    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; padding: 14px; }
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; padding: 14px; }
     .viewport { overflow: auto; border: 1px solid #303640; background: #090b0e; min-height: 560px; position: relative; }
     .stage { position: relative; transform-origin: top left; width: max-content; height: max-content; }
     canvas { display: block; image-rendering: pixelated; }
@@ -27,7 +28,7 @@
     input[type=range], input[type=number] { width: 100%; }
     input[type=number] { background:#0e1116; color:#e8edf2; border:1px solid #414955; border-radius:6px; padding:6px 7px; }
     code { display: block; white-space: pre-wrap; word-break: break-all; background: #0e1116; padding: 9px; border-radius: 7px; color: #bcd6ff; font-size: 12px; }
-    #status, #sectorStatus { min-height: 34px; color: #aab4c0; font-size: 13px; white-space: pre-wrap; }
+    #status, #sectorStatus { min-height: 34px; color: #aab4c0; font-size: 13px; white-space: pre-wrap; margin-top: 7px; }
     .legend { display: grid; grid-template-columns: 18px 1fr; gap: 6px 8px; align-items: center; font-size: 13px; color: #aab4c0; }
     .swatch { width: 18px; height: 5px; border-radius: 9px; }
     .free { background: #4aa3ff; }.occupied { background: #ff5b69; }.center { background: #42e29c; }
@@ -40,40 +41,56 @@
     .warnings { font-size:12px; display:grid; gap:6px; }
     .warning { border-left:3px solid #d2a84a; padding:5px 7px; background:#1e1a12; }
     .error { border-left-color:#ff5b69; background:#251316; }
-    .hint { color:#8f9aa6; font-size:12px; line-height:1.45; }
+    .hint { color:#8f9aa6; font-size:12px; line-height:1.55; }
+    .workflow { border:1px solid #34404d; background:#121820; border-radius:8px; padding:10px; }
+    .workflow strong { font-size:13px; }
     .hidden { display:none !important; }
     @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } aside { order: -1; max-height:none; } }
   </style>
 </head>
 <body>
 <header>
-  <strong>F1TENTH Raceline Editor</strong>
-  <button id="mapModeBtn" class="active">Map edit</button>
-  <button id="speedModeBtn" disabled>Speed sectors</button>
-  <button id="otModeBtn" disabled>Overtaking sectors</button>
+  <strong>F1TENTH 레이스라인 편집기</strong>
+  <button id="mapModeBtn" class="active">맵 편집</button>
+  <button id="speedModeBtn" disabled>속도 섹터</button>
+  <button id="otModeBtn" disabled>추월 섹터</button>
   <span style="flex:1"></span>
-  <button id="undoBtn">Undo</button>
-  <button id="redoBtn">Redo</button>
+  <button id="undoBtn">실행 취소</button>
+  <button id="redoBtn">다시 실행</button>
 </header>
 <div class="layout">
   <div class="viewport" id="viewport"><div class="stage" id="stage"><canvas id="base"></canvas><canvas id="overlay"></canvas></div></div>
   <aside>
     <div id="mapPanel">
-      <div class="group"><h3>Map brush</h3><div class="row"><button id="freeBtn" class="active">Free brush</button><button id="occupiedBtn">Occupied brush</button><button id="clearBtn">Clear edits</button></div><label for="radius" style="margin-top:9px">Radius: <span id="radiusValue">10</span> px</label><input id="radius" type="range" min="1" max="80" value="10"></div>
-      <div class="group"><h3>Centerline preview</h3><div class="row"><button id="previewBtn">Recompute</button><button id="toggleCenterBtn">Hide centerline</button></div></div>
-      <div class="group"><h3>Save map edits</h3><button id="saveBtn">Save map_edit.json</button><div id="status"></div></div>
-      <div class="group"><h3>Generate command</h3><code id="generateCommand">loading...</code></div>
-      <div class="group legend"><span class="swatch free"></span><span>Force free space</span><span class="swatch occupied"></span><span>Force occupied</span><span class="swatch center"></span><span>Centerline preview</span></div>
+      <div class="group workflow">
+        <strong>권장 작업 순서</strong>
+        <div class="hint" style="margin-top:6px">1. 브러시로 맵 수정 → 2. 중심선 미리보기 확인 → 3. ‘저장 + 레이스라인 재생성’ → 4. 속도/추월 섹터 조정</div>
+      </div>
+      <div class="group">
+        <h3>맵 브러시</h3>
+        <div class="row"><button id="freeBtn" class="active">주행 가능 영역</button><button id="occupiedBtn">장애물 영역</button><button id="clearBtn">편집 초기화</button></div>
+        <label for="radius" style="margin-top:9px">브러시 반경: <span id="radiusValue">10</span> px</label>
+        <input id="radius" type="range" min="1" max="80" value="10">
+      </div>
+      <div class="group"><h3>중심선 미리보기</h3><div class="row"><button id="previewBtn">다시 계산</button><button id="toggleCenterBtn">중심선 숨기기</button></div></div>
+      <div class="group">
+        <h3>편집 반영</h3>
+        <div class="row"><button id="saveBtn">편집만 저장</button><button id="regenerateBtn" class="primary">저장 + 레이스라인 재생성</button></div>
+        <div id="status"></div>
+        <div class="hint">재생성하면 <code style="display:inline;padding:2px 4px">raceline_iqp.csv</code>, 최단경로, 트랙 경계가 새 맵 기준으로 갱신되고 섹터 화면도 자동으로 새로고침됩니다.</div>
+      </div>
+      <div class="group"><h3>터미널 생성 명령</h3><code id="generateCommand">불러오는 중...</code></div>
+      <div class="group legend"><span class="swatch free"></span><span>주행 가능 영역으로 강제 지정</span><span class="swatch occupied"></span><span>장애물 영역으로 강제 지정</span><span class="swatch center"></span><span>편집 맵 기준 중심선 미리보기</span></div>
     </div>
     <div id="sectorPanel" class="hidden">
-      <div class="group"><h3 id="sectorTitle">Sectors</h3><div class="hint">Click the minimum-curvature raceline to add a split. Sector locations are stored in meters (s_m), then exported to the legacy waypoint-index YAML schema.</div></div>
-      <div id="speedGlobals" class="group hidden"><h3>Speed settings</h3><label>Global limit<input id="globalLimit" type="number" min="0" max="1" step="0.01"></label></div>
-      <div id="otGlobals" class="group hidden"><h3>Overtaking settings</h3><div class="field-grid"><label>Yeet factor<input id="yeetFactor" type="number" min="0.01" step="0.05"></label><label>Spline len [wp]<input id="splineLen" type="number" min="1" step="1"></label></div><label style="margin-top:7px">OT sector begin<input id="otSectorBegin" type="number" min="0" max="1" step="0.05"></label></div>
-      <div class="group"><div class="row"><button id="saveSectorsBtn">Save + export YAML</button><button id="refreshSectorsBtn">Reload raceline</button></div><div id="sectorStatus"></div></div>
-      <div class="group"><h3>Sector list</h3><div id="sectorList"></div></div>
-      <div class="group"><h3>Validation</h3><div id="warningList" class="warnings"></div></div>
+      <div class="group"><h3 id="sectorTitle">섹터</h3><div class="hint">최소 곡률 레이스라인을 클릭하면 분할점이 추가됩니다. 분할 위치는 waypoint 번호가 아니라 물리 거리(s_m)로 저장됩니다.</div></div>
+      <div id="speedGlobals" class="group hidden"><h3>속도 설정</h3><label>전체 속도 상한<input id="globalLimit" type="number" min="0" max="1" step="0.01"></label></div>
+      <div id="otGlobals" class="group hidden"><h3>추월 설정</h3><div class="field-grid"><label>Yeet 계수<input id="yeetFactor" type="number" min="0.01" step="0.05"></label><label>스플라인 길이 [wp]<input id="splineLen" type="number" min="1" step="1"></label></div><label style="margin-top:7px">추월 섹터 시작 비율<input id="otSectorBegin" type="number" min="0" max="1" step="0.05"></label></div>
+      <div class="group"><div class="row"><button id="saveSectorsBtn" class="primary">섹터 저장 + YAML 내보내기</button><button id="refreshSectorsBtn">레이스라인 다시 불러오기</button></div><div id="sectorStatus"></div></div>
+      <div class="group"><h3>섹터 목록</h3><div id="sectorList"></div></div>
+      <div class="group"><h3>검증 결과</h3><div id="warningList" class="warnings"></div></div>
     </div>
-    <div class="group"><h3>View</h3><label for="zoom">Zoom: <span id="zoomValue">100</span>%</label><input id="zoom" type="range" min="25" max="300" step="25" value="100"></div>
+    <div class="group"><h3>화면</h3><label for="zoom">확대/축소: <span id="zoomValue">100</span>%</label><input id="zoom" type="range" min="25" max="300" step="25" value="100"></div>
   </aside>
 </div>
 <script src="/editor.js"></script>
