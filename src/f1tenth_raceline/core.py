@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ from scipy.signal import savgol_filter
 from skimage.morphology import skeletonize
 from skimage.segmentation import watershed
 
+from .optimizer_diagnostics import run_optimizer_with_diagnostics
 from .vendor import activate_optimizer_imports, default_config_dir, ensure_vendor
 
 
@@ -341,7 +341,7 @@ def generate_racelines(
     initial_position: Optional[tuple[float, float, float]] = None,
     work_dir: Optional[Path] = None,
 ) -> RacelineResult:
-    _, helper_funcs_glob, trajectory_optimizer = _optimizer_modules()
+    tph, helper_funcs_glob, trajectory_optimizer = _optimizer_modules()
 
     map_yaml = map_yaml.resolve()
     if not map_yaml.is_file():
@@ -410,12 +410,16 @@ def generate_racelines(
     sp_track = work_dir / "map_centerline_2"
     write_track_csv(iqp_track.with_suffix(".csv"), cent_w)
 
-    result_iqp = trajectory_optimizer(
+    result_iqp = run_optimizer_with_diagnostics(
+        tph=tph,
+        trajectory_optimizer=trajectory_optimizer,
         input_path=str(config_dir),
         track_name=str(iqp_track),
         curv_opt_type="mincurv_iqp",
         safety_width=safety_width,
         plot=False,
+        diagnostics_dir=work_dir,
+        label="primary_iqp",
     )
     if len(result_iqp) != 5:
         raise RuntimeError(
@@ -428,12 +432,16 @@ def generate_racelines(
     if bound_r is None or bound_l is None:
         bound_r, bound_l = br_iqp, bl_iqp
 
-    result_iqp_ot = trajectory_optimizer(
+    result_iqp_ot = run_optimizer_with_diagnostics(
+        tph=tph,
+        trajectory_optimizer=trajectory_optimizer,
         input_path=str(config_dir),
         track_name=str(iqp_track),
         curv_opt_type="mincurv_iqp",
         safety_width=safety_width_sp,
         plot=False,
+        diagnostics_dir=work_dir,
+        label="secondary_iqp",
     )
     raceline_iqp_ot = result_iqp_ot[0]
 
