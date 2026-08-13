@@ -61,7 +61,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
     else:
         from .edit_model import materialize_profile
         with materialize_profile(map_yaml,args.edit.resolve()) as edited_map: result=generate_racelines(edited_map.yaml_path,**kwargs)
-    _write_outputs(out,result); from .upstream_exports import export_upstream_waypoint_json; global_waypoints,ltpl_waypoints=export_upstream_waypoint_json(out,result); summary={"map":str(map_yaml),"optimizer_commit":UPSTREAM_COMMIT,"config_dir":str((args.config_dir or default_config_dir()).resolve()),"safety_width":args.safety_width,"safety_width_sp":args.safety_width_sp,"reverse":args.reverse,"estimated_lap_time_iqp_s":result.est_lap_time_iqp,"estimated_lap_time_shortest_s":result.est_lap_time_shortest,"outputs":{"centerline":str(out/"centerline.csv"),"raceline_iqp":str(out/"raceline_iqp.csv"),"raceline_shortest":str(out/"raceline_shortest.csv"),"ltpl":str(out/"ltpl.csv"),"bound_right":str(out/"bound_right.csv"),"bound_left":str(out/"bound_left.csv"),"global_waypoints":str(global_waypoints),"ltpl_waypoints":str(ltpl_waypoints)}}; (out/"summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8"); print(json.dumps(summary,indent=2)); return 0
+    _write_outputs(out,result)
+    from .upstream_exports import export_upstream_waypoint_json
+    global_waypoints,ltpl_waypoints=export_upstream_waypoint_json(out, result)
+    summary={"map":str(map_yaml),"optimizer_commit":UPSTREAM_COMMIT,"config_dir":str((args.config_dir or default_config_dir()).resolve()),"safety_width":args.safety_width,"safety_width_sp":args.safety_width_sp,"reverse":args.reverse,"estimated_lap_time_iqp_s":result.est_lap_time_iqp,"estimated_lap_time_shortest_s":result.est_lap_time_shortest,"outputs":{"centerline":str(out/"centerline.csv"),"raceline_iqp":str(out/"raceline_iqp.csv"),"raceline_shortest":str(out/"raceline_shortest.csv"),"ltpl":str(out/"ltpl.csv"),"bound_right":str(out/"bound_right.csv"),"bound_left":str(out/"bound_left.csv"),"global_waypoints":str(global_waypoints),"ltpl_waypoints":str(ltpl_waypoints)}}; (out/"summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8"); print(json.dumps(summary,indent=2)); return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
