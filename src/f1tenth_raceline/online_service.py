@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import html
 import json
 import tempfile
 import threading
@@ -51,10 +50,14 @@ def _zip_project(root: Path) -> bytes:
     return buf.getvalue()
 
 
+def _online_page() -> bytes:
+    return '''<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>F1TENTH Online</title><style>body{font-family:system-ui;background:#101318;color:#e8edf2;max-width:760px;margin:60px auto;padding:20px}.drop{border:2px dashed #66717f;border-radius:14px;padding:70px 30px;text-align:center}.drop.over{border-color:#d7e8ff;background:#171d25}button{padding:10px 16px;margin:8px;border-radius:8px}#status{white-space:pre-wrap;color:#aab4c0}</style></head><body><h1>F1TENTH 레이스라인 온라인 서비스</h1><p>맵 YAML과 YAML이 참조하는 이미지(PGM/PNG 등)를 함께 드래그해서 놓으세요.</p><div id="drop" class="drop">파일을 여기에 드래그 앤 드롭<br><button onclick="pick.click()">파일 선택</button><input id="pick" type="file" multiple hidden></div><div id="status"></div><script>const d=document.querySelector('#drop'),p=document.querySelector('#pick'),s=document.querySelector('#status');['dragenter','dragover'].forEach(x=>d.addEventListener(x,e=>{e.preventDefault();d.classList.add('over')}));['dragleave','drop'].forEach(x=>d.addEventListener(x,e=>{e.preventDefault();d.classList.remove('over')}));d.addEventListener('drop',e=>upload(e.dataTransfer.files));p.onchange=()=>upload(p.files);async function upload(fs){let f=new FormData();for(const x of fs)f.append('files',x);s.textContent='업로드 중...';let r=await fetch('/api/upload',{method:'POST',body:f}),j=await r.json();if(!r.ok){s.textContent=j.error;return}s.innerHTML=`업로드 완료: ${j.map}<br><a href="${j.editor}" target="_blank"><button>편집기 열기</button></a><a href="${j.download}"><button>프로젝트 다운로드</button></a>`}</script></body></html>'''.encode("utf-8")
+
+
 def run_online_service(host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
     workspace = Path(tempfile.mkdtemp(prefix="raceline-online-"))
     projects: dict[str, Path] = {}
-    page = b'''<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>F1TENTH Online</title><style>body{font-family:system-ui;background:#101318;color:#e8edf2;max-width:760px;margin:60px auto;padding:20px}.drop{border:2px dashed #66717f;border-radius:14px;padding:70px 30px;text-align:center}.drop.over{border-color:#d7e8ff;background:#171d25}button{padding:10px 16px;margin:8px;border-radius:8px}#status{white-space:pre-wrap;color:#aab4c0}</style></head><body><h1>F1TENTH 레이스라인 온라인 서비스</h1><p>맵 YAML과 YAML이 참조하는 이미지(PGM/PNG 등)를 함께 드래그해서 놓으세요.</p><div id="drop" class="drop">파일을 여기에 드래그 앤 드롭<br><button onclick="pick.click()">파일 선택</button><input id="pick" type="file" multiple hidden></div><div id="status"></div><script>const d=document.querySelector('#drop'),p=document.querySelector('#pick'),s=document.querySelector('#status');['dragenter','dragover'].forEach(x=>d.addEventListener(x,e=>{e.preventDefault();d.classList.add('over')}));['dragleave','drop'].forEach(x=>d.addEventListener(x,e=>{e.preventDefault();d.classList.remove('over')}));d.addEventListener('drop',e=>upload(e.dataTransfer.files));p.onchange=()=>upload(p.files);async function upload(fs){let f=new FormData();for(const x of fs)f.append('files',x);s.textContent='업로드 중...';let r=await fetch('/api/upload',{method:'POST',body:f}),j=await r.json();if(!r.ok){s.textContent=j.error;return}s.innerHTML=`업로드 완료: ${j.map}<br><a href="${j.editor}" target="_blank"><button>편집기 열기</button></a><a href="${j.download}"><button>프로젝트 다운로드</button></a>`}</script></body></html>'''
+    page = _online_page()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args): print(f"[online] {self.address_string()} - {fmt % args}")
@@ -62,7 +65,7 @@ def run_online_service(host: str = "127.0.0.1", port: int = 8765, open_browser: 
             self.send_response(status); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(data))); self.send_header("Cache-Control", "no-store")
             if disposition: self.send_header("Content-Disposition", disposition)
             self.end_headers(); self.wfile.write(data)
-        def send_json(self, obj, status=200): self.send_data(json.dumps(obj).encode(), "application/json; charset=utf-8", status)
+        def send_json(self, obj, status=200): self.send_data(json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", status)
         def do_GET(self):
             path = urlparse(self.path).path
             if path == "/": self.send_data(page, "text/html; charset=utf-8"); return
@@ -83,7 +86,7 @@ def run_online_service(host: str = "127.0.0.1", port: int = 8765, open_browser: 
                 for name,data in files: (root / name).write_bytes(data)
                 map_yaml = root / yamls[0]
                 import yaml
-                meta = yaml.safe_load(map_yaml.read_text()) or {}; image = _safe_name(str(meta.get("image", "")))
+                meta = yaml.safe_load(map_yaml.read_text(encoding="utf-8")) or {}; image = _safe_name(str(meta.get("image", "")))
                 if not (root / image).is_file(): raise ValueError(f"YAML이 참조하는 이미지 '{image}'도 함께 업로드해야 합니다.")
                 projects[key] = root
                 from .editor_server import run_editor
