@@ -29,9 +29,11 @@ def test_upstream_json_names_schema_and_payload(tmp_path: Path) -> None:
     assert np.isclose(g["global_traj_wpnts_iqp"]["wpnts"][0]["psi_rad"], np.pi / 2)
 
 
-def test_cli_and_gui_wire_upstream_exports() -> None:
+def test_cli_and_gui_wire_upstream_exports_to_output_dir() -> None:
     root = Path(__file__).parents[1] / "src" / "f1tenth_raceline"
     cli = (root / "cli.py").read_text()
     editor = (root / "editor_server.py").read_text()
-    assert "export_upstream_waypoint_json(map_yaml.parent, result)" in cli
-    assert "export_upstream_waypoint_json(state.map_yaml.parent, result)" in editor
+    assert "export_upstream_waypoint_json(out, result)" in cli
+    assert "export_upstream_waypoint_json(state.raceline_dir, result)" in editor
+    assert 'map_yaml.parent / "output"' in cli
+    assert 'map_yaml.parent / "output"' in editor
