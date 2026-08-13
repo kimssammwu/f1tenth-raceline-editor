@@ -37,6 +37,8 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 def cmd_edit(args: argparse.Namespace) -> int:
     if args.online_service:
         if args.map is not None: raise SystemExit("--online-service 모드에서는 --map을 지정하지 마세요. 브라우저에서 업로드합니다.")
+        from .online_recovery import install_online_optimizer_recovery
+        install_online_optimizer_recovery()
         from .online_service import run_online_service
         run_online_service(host=args.host, port=args.port, open_browser=not args.no_browser); return 0
     if args.map is None: raise SystemExit("edit에는 --map이 필요합니다. 온라인 모드는 --online-service를 사용하세요.")
