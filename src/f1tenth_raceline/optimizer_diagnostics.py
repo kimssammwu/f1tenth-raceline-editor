@@ -36,6 +36,7 @@ def analyze_reftrack(reftrack: np.ndarray, safety_width: float) -> dict[str, Any
 
     finite_rows = np.all(np.isfinite(track[:, :4]), axis=1)
     too_narrow = total < float(safety_width)
+    negative_width = (wr < 0.0) | (wl < 0.0)
     duplicate_like = seg_len < 1e-6
 
     def _argmin(values: np.ndarray) -> int:
@@ -50,6 +51,7 @@ def analyze_reftrack(reftrack: np.ndarray, safety_width: float) -> dict[str, Any
         "points": int(len(track)),
         "safety_width": float(safety_width),
         "nonfinite_indices": np.flatnonzero(~finite_rows).astype(int).tolist(),
+        "negative_width_indices": np.flatnonzero(negative_width).astype(int).tolist(),
         "too_narrow_indices": np.flatnonzero(too_narrow).astype(int).tolist(),
         "duplicate_indices": np.flatnonzero(duplicate_like).astype(int).tolist(),
         "min_right_width": float(np.nanmin(wr)),
@@ -58,6 +60,7 @@ def analyze_reftrack(reftrack: np.ndarray, safety_width: float) -> dict[str, Any
         "min_left_width_index": _argmin(wl),
         "min_total_width": float(np.nanmin(total)),
         "min_total_width_index": _argmin(total),
+        "min_clearance_margin": float(np.nanmin(total - float(safety_width))),
         "min_segment_length": float(np.nanmin(seg_len)),
         "min_segment_length_index": _argmin(seg_len),
         "max_segment_length": float(np.nanmax(seg_len)),
@@ -77,6 +80,7 @@ def format_reftrack_diagnostics(diag: dict[str, Any]) -> str:
             f"min_total_width={diag['min_total_width']:.3f}m"
             f"@{diag['min_total_width_index']}"
         ),
+        f"min_clearance_margin={diag['min_clearance_margin']:.3f}m",
         (
             f"min_right={diag['min_right_width']:.3f}m"
             f"@{diag['min_right_width_index']}"
@@ -104,6 +108,8 @@ def format_reftrack_diagnostics(diag: dict[str, Any]) -> str:
     ]
     if diag["too_narrow_indices"]:
         parts.append(f"too_narrow={diag['too_narrow_indices'][:12]}")
+    if diag["negative_width_indices"]:
+        parts.append(f"negative_width={diag['negative_width_indices'][:12]}")
     if diag["duplicate_indices"]:
         parts.append(f"duplicate_like={diag['duplicate_indices'][:12]}")
     if diag["nonfinite_indices"]:
@@ -162,7 +168,7 @@ def write_reftrack_diagnostics(
     )
 
 
-def run_optimizer_with_diagnostics(
+def _run_optimizer_once_with_diagnostics(
     *,
     tph: Any,
     trajectory_optimizer: Callable[..., Any],
@@ -174,14 +180,6 @@ def run_optimizer_with_diagnostics(
     diagnostics_dir: Path,
     label: str,
 ) -> Any:
-    """Run the optimizer and annotate min-curvature QP failures with the exact reftrack.
-
-    TPH's IQP handler repeatedly calls ``opt_min_curv`` while moving/interpolating
-    the reference track. A QP can therefore become infeasible only after several
-    successful IQP iterations. Temporarily wrapping ``opt_min_curv`` lets us dump
-    the *actual iteration input* that caused quadprog to fail instead of only the
-    original map centerline.
-    """
     if curv_opt_type not in {"mincurv", "mincurv_iqp"}:
         return trajectory_optimizer(
             input_path=input_path,
@@ -238,3 +236,69 @@ def run_optimizer_with_diagnostics(
         )
     finally:
         tph.opt_min_curv.opt_min_curv = original
+
+
+def run_optimizer_with_diagnostics(
+    *,
+    tph: Any,
+    trajectory_optimizer: Callable[..., Any],
+    input_path: str,
+    track_name: str,
+    curv_opt_type: str,
+    safety_width: float,
+    plot: bool,
+    diagnostics_dir: Path,
+    label: str,
+) -> Any:
+    """Run an optimizer with per-iteration diagnostics and an IQP fallback.
+
+    ``mincurv_iqp`` can become infeasible only after several successful IQP
+    iterations because every iteration moves and re-interpolates the reference
+    track. If that happens, the failing iteration is dumped to CSV and a single
+    non-iterative ``mincurv`` solve is attempted with the *same* safety width.
+    The safety constraint is never silently relaxed.
+    """
+    try:
+        return _run_optimizer_once_with_diagnostics(
+            tph=tph,
+            trajectory_optimizer=trajectory_optimizer,
+            input_path=input_path,
+            track_name=track_name,
+            curv_opt_type=curv_opt_type,
+            safety_width=safety_width,
+            plot=plot,
+            diagnostics_dir=diagnostics_dir,
+            label=label,
+        )
+    except (ValueError, RuntimeError) as iqp_exc:
+        if curv_opt_type != "mincurv_iqp":
+            raise
+
+        fallback_label = f"{label}_fallback_mincurv"
+        print(
+            f"[WARN] {label}: mincurv_iqp failed. "
+            f"Retrying once with mincurv at the same safety_width={safety_width:.3f}m."
+        )
+        try:
+            result = _run_optimizer_once_with_diagnostics(
+                tph=tph,
+                trajectory_optimizer=trajectory_optimizer,
+                input_path=input_path,
+                track_name=track_name,
+                curv_opt_type="mincurv",
+                safety_width=safety_width,
+                plot=plot,
+                diagnostics_dir=diagnostics_dir,
+                label=fallback_label,
+            )
+        except (ValueError, RuntimeError) as fallback_exc:
+            raise RuntimeError(
+                f"{label}: both mincurv_iqp and the same-safety-width mincurv "
+                f"fallback failed. IQP error: {iqp_exc} Fallback error: {fallback_exc}"
+            ) from fallback_exc
+
+        print(
+            f"[WARN] {label}: mincurv fallback succeeded. "
+            "The generated line is valid, but the IQP-specific failure CSV should be inspected."
+        )
+        return result
