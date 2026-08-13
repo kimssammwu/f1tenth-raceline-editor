@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import configparser
+import json
 from pathlib import Path
 from typing import Any, Callable
 
@@ -168,6 +170,101 @@ def write_reftrack_diagnostics(
     )
 
 
+def _configured_curvature_limit(input_path: str) -> float | None:
+    """Read the same vehicle curvature limit used by the upstream optimizer."""
+    config_file = Path(input_path) / "racecar_f110.ini"
+    if not config_file.is_file():
+        return None
+
+    parser = configparser.ConfigParser()
+    if not parser.read(config_file):
+        return None
+
+    try:
+        veh_params = json.loads(parser.get("GENERAL_OPTIONS", "veh_params"))
+        curvlim = float(veh_params["curvlim"])
+    except (configparser.Error, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Could not read vehicle curvature limit from {config_file}: {exc}"
+        ) from exc
+
+    if not np.isfinite(curvlim) or curvlim <= 0.0:
+        raise RuntimeError(
+            f"Invalid vehicle curvature limit in {config_file}: {curvlim}"
+        )
+    return curvlim
+
+
+def analyze_optimized_trajectory(
+    trajectory: np.ndarray,
+    curvature_limit: float | None,
+) -> dict[str, Any]:
+    """Inspect the final trajectory returned by the upstream optimizer.
+
+    The upstream format is [s, x, y, psi, kappa, vx, ax].
+    """
+    traj = np.asarray(trajectory, dtype=float)
+    if traj.ndim != 2 or traj.shape[1] < 5:
+        raise RuntimeError(
+            "Optimizer trajectory must have shape (N, >=5) with curvature in column 4, "
+            f"got {traj.shape}."
+        )
+    if len(traj) < 2:
+        raise RuntimeError("Optimizer trajectory must contain at least 2 points.")
+
+    finite_rows = np.all(np.isfinite(traj[:, :5]), axis=1)
+    abs_curvature = np.abs(traj[:, 4])
+    finite_curvature = np.where(np.isfinite(abs_curvature), abs_curvature, -np.inf)
+    max_curvature_index = int(np.argmax(finite_curvature))
+    max_abs_curvature = float(finite_curvature[max_curvature_index])
+
+    steps = np.linalg.norm(np.diff(traj[:, 1:3], axis=0), axis=1)
+    min_step_index = int(np.argmin(steps))
+    min_step = float(steps[min_step_index])
+
+    return {
+        "points": int(len(traj)),
+        "nonfinite_indices": np.flatnonzero(~finite_rows).astype(int).tolist(),
+        "max_abs_curvature": max_abs_curvature,
+        "max_abs_curvature_index": max_curvature_index,
+        "curvature_limit": curvature_limit,
+        "min_step": min_step,
+        "min_step_index": min_step_index,
+    }
+
+
+def _validate_fallback_result(result: Any, input_path: str, label: str) -> dict[str, Any]:
+    if not isinstance(result, (tuple, list)) or not result:
+        raise RuntimeError(f"{label}: optimizer returned an unexpected result object.")
+
+    curvature_limit = _configured_curvature_limit(input_path)
+    diag = analyze_optimized_trajectory(result[0], curvature_limit)
+
+    if diag["nonfinite_indices"]:
+        raise RuntimeError(
+            f"{label}: fallback trajectory contains non-finite values at indices "
+            f"{diag['nonfinite_indices'][:12]}."
+        )
+    if diag["min_step"] < 1e-6:
+        raise RuntimeError(
+            f"{label}: fallback trajectory contains a degenerate segment at "
+            f"index {diag['min_step_index']} (step={diag['min_step']:.9f}m)."
+        )
+
+    if curvature_limit is not None:
+        # Allow only a very small post-interpolation numerical overshoot.
+        allowed = curvature_limit + max(0.02, curvature_limit * 0.02)
+        if diag["max_abs_curvature"] > allowed:
+            raise RuntimeError(
+                f"{label}: fallback trajectory violates the configured curvature limit: "
+                f"max_abs_curvature={diag['max_abs_curvature']:.3f}1/m"
+                f"@{diag['max_abs_curvature_index']}, curvlim={curvature_limit:.3f}1/m "
+                f"(acceptance limit={allowed:.3f}1/m)."
+            )
+
+    return diag
+
+
 def _run_optimizer_once_with_diagnostics(
     *,
     tph: Any,
@@ -250,13 +347,15 @@ def run_optimizer_with_diagnostics(
     diagnostics_dir: Path,
     label: str,
 ) -> Any:
-    """Run an optimizer with per-iteration diagnostics and an IQP fallback.
+    """Run an optimizer with per-iteration diagnostics and a guarded IQP fallback.
 
     ``mincurv_iqp`` can become infeasible only after several successful IQP
     iterations because every iteration moves and re-interpolates the reference
     track. If that happens, the failing iteration is dumped to CSV and a single
     non-iterative ``mincurv`` solve is attempted with the *same* safety width.
-    The safety constraint is never silently relaxed.
+    The fallback is accepted only when its final trajectory is finite,
+    non-degenerate, and respects the configured vehicle curvature limit within
+    a small numerical tolerance. The safety constraint is never silently relaxed.
     """
     try:
         return _run_optimizer_once_with_diagnostics(
@@ -274,6 +373,7 @@ def run_optimizer_with_diagnostics(
         if curv_opt_type != "mincurv_iqp":
             raise
 
+        print(f"[RACELINE-DIAG] {iqp_exc}")
         fallback_label = f"{label}_fallback_mincurv"
         print(
             f"[WARN] {label}: mincurv_iqp failed. "
@@ -297,8 +397,28 @@ def run_optimizer_with_diagnostics(
                 f"fallback failed. IQP error: {iqp_exc} Fallback error: {fallback_exc}"
             ) from fallback_exc
 
+        try:
+            fallback_diag = _validate_fallback_result(
+                result=result,
+                input_path=input_path,
+                label=fallback_label,
+            )
+        except RuntimeError as validation_exc:
+            raise RuntimeError(
+                f"{label}: mincurv_iqp failed and the mincurv fallback was rejected. "
+                f"Fallback validation: {validation_exc} Original IQP error: {iqp_exc}"
+            ) from validation_exc
+
+        curvature_limit = fallback_diag["curvature_limit"]
+        if curvature_limit is None:
+            curvature_text = "curvlim=unavailable"
+        else:
+            curvature_text = (
+                f"max_abs_curvature={fallback_diag['max_abs_curvature']:.3f}1/m, "
+                f"curvlim={curvature_limit:.3f}1/m"
+            )
         print(
-            f"[WARN] {label}: mincurv fallback succeeded. "
-            "The generated line is valid, but the IQP-specific failure CSV should be inspected."
+            f"[WARN] {label}: mincurv fallback passed post-validation "
+            f"({curvature_text}). Inspect the IQP failure CSV before using it."
         )
         return result
