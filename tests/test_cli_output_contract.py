@@ -20,26 +20,26 @@ EXPECTED_FILES = {
 
 
 def test_generate_output_contract_includes_original_waypoint_artifacts(monkeypatch, tmp_path: Path) -> None:
-    map_yaml = tmp_path / "track.yaml"
-    map_yaml.write_text("image: track.png\nresolution: 0.05\norigin: [0,0,0]\n")
-    config_dir = tmp_path / "config"; config_dir.mkdir()
+    map_yaml = tmp_path / "track.yaml"; map_yaml.write_text("image: track.png\nresolution: 0.05\norigin: [0,0,0]\n"); config_dir = tmp_path / "config"; config_dir.mkdir()
     fake = SimpleNamespace(centerline_with_width=np.array([[0., 0., 1., 1.]]), raceline_iqp=np.array([[0., 0., 0., 0., 0., 1., 0.]]), raceline_shortest=np.array([[0., 0., 0., 0., 0., 1., 0.]]), ltpl=np.zeros((1, 12)), bound_right=np.array([[0., -1.]]), bound_left=np.array([[0., 1.]]), est_lap_time_iqp=1.23, est_lap_time_shortest=1.20)
     calls = []
     def fake_generate(path, **kwargs): calls.append((path, kwargs)); return fake
     monkeypatch.setattr(cli, "generate_racelines", fake_generate)
-    out = tmp_path / "out"
-    args = argparse.Namespace(map=map_yaml, output_dir=out, edit=None, config_dir=config_dir, safety_width=0.4, safety_width_sp=0.35, reverse=False, initial_pose=None)
-    assert cli.cmd_generate(args) == 0
-    assert calls[0][0] == map_yaml.resolve()
+    out = tmp_path / "out"; args = argparse.Namespace(map=map_yaml, output_dir=out, edit=None, config_dir=config_dir, safety_width=0.4, safety_width_sp=0.35, reverse=False, initial_pose=None)
+    assert cli.cmd_generate(args) == 0; assert calls[0][0] == map_yaml.resolve()
     for filename, header in EXPECTED_FILES.items():
         path = out / filename; assert path.is_file(), filename; assert path.read_text().splitlines()[0] == header
-    assert (tmp_path / "global_waypoints.json").is_file()
-    assert (tmp_path / "ltpl_waypoints.json").is_file()
-    summary = json.loads((out / "summary.json").read_text())
-    assert set(summary["outputs"]) == {"centerline", "raceline_iqp", "raceline_shortest", "ltpl", "bound_right", "bound_left", "global_waypoints", "ltpl_waypoints"}
-    assert summary["safety_width"] == 0.4; assert summary["safety_width_sp"] == 0.35
+    assert (out / "global_waypoints.json").is_file(); assert (out / "ltpl_waypoints.json").is_file(); assert not (tmp_path / "global_waypoints.json").exists(); assert not (tmp_path / "ltpl_waypoints.json").exists()
+    summary = json.loads((out / "summary.json").read_text()); assert set(summary["outputs"]) == {"centerline", "raceline_iqp", "raceline_shortest", "ltpl", "bound_right", "bound_left", "global_waypoints", "ltpl_waypoints"}; assert all(Path(value).parent == out.resolve() for value in summary["outputs"].values()); assert summary["safety_width"] == 0.4; assert summary["safety_width_sp"] == 0.35
+
+
+def test_generate_defaults_to_map_output_directory(monkeypatch, tmp_path: Path) -> None:
+    map_yaml = tmp_path / "track.yaml"; map_yaml.write_text("image: track.png\nresolution: 0.05\norigin: [0,0,0]\n"); config_dir = tmp_path / "config"; config_dir.mkdir()
+    fake = SimpleNamespace(centerline_with_width=np.array([[0., 0., 1., 1.]]), raceline_iqp=np.array([[0., 0., 0., 0., 0., 1., 0.]]), raceline_shortest=np.array([[0., 0., 0., 0., 0., 1., 0.]]), ltpl=np.zeros((1, 12)), bound_right=np.array([[0., -1.]]), bound_left=np.array([[0., 1.]]), est_lap_time_iqp=1.23, est_lap_time_shortest=1.20)
+    monkeypatch.setattr(cli, "generate_racelines", lambda *args, **kwargs: fake)
+    args = argparse.Namespace(map=map_yaml, output_dir=None, edit=None, config_dir=config_dir, safety_width=0.4, safety_width_sp=0.35, reverse=False, initial_pose=None); assert cli.cmd_generate(args) == 0
+    output = tmp_path / "output"; assert (output / "summary.json").is_file(); assert (output / "global_waypoints.json").is_file(); assert (output / "ltpl_waypoints.json").is_file()
 
 
 def test_parser_exposes_sector_workflow() -> None:
-    parser = cli.build_parser(); args = parser.parse_args(["sectors", "--map", "track.yaml"])
-    assert args.command == "sectors"; assert args.func is cli.cmd_sectors
+    parser = cli.build_parser(); args = parser.parse_args(["sectors", "--map", "track.yaml"]); assert args.command == "sectors"; assert args.func is cli.cmd_sectors
