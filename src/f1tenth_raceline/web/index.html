@@ -94,5 +94,60 @@
   </aside>
 </div>
 <script src="/editor.js"></script>
+<script>
+(() => {
+  const speed = document.getElementById('speedModeBtn');
+  const overtaking = document.getElementById('otModeBtn');
+  const regenerate = document.getElementById('regenerateBtn');
+  const status = document.getElementById('status');
+  let allowNativeClick = false;
+
+  function keepSectorTabsActionable() {
+    if (!regenerate.disabled) {
+      speed.disabled = false;
+      overtaking.disabled = false;
+    }
+  }
+
+  function explainAndFocus(message) {
+    status.textContent = message;
+    status.style.color = '#ffb86c';
+    regenerate.focus();
+    regenerate.scrollIntoView({behavior: 'smooth', block: 'center'});
+  }
+
+  async function gateSectorClick(event, kind) {
+    if (allowNativeClick || regenerate.disabled) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    try {
+      const response = await fetch('/api/sectors?t=' + Date.now(), {cache: 'no-store'});
+      const data = await response.json();
+      if (!data.available) {
+        explainAndFocus('섹터 편집에는 레이스라인이 필요합니다. 먼저 “저장 + 레이스라인 재생성”을 실행하세요.');
+        return;
+      }
+      if (kind === 'ot' && !data.shortest_available) {
+        explainAndFocus('추월 섹터에는 최단경로 레이스라인이 필요합니다. 레이스라인 재생성을 완료한 뒤 다시 시도하세요.');
+        return;
+      }
+      allowNativeClick = true;
+      event.currentTarget.click();
+      allowNativeClick = false;
+    } catch (error) {
+      explainAndFocus('섹터 상태 확인 실패: ' + error.message);
+    }
+  }
+
+  speed.addEventListener('click', event => gateSectorClick(event, 'speed'), true);
+  overtaking.addEventListener('click', event => gateSectorClick(event, 'ot'), true);
+
+  const observer = new MutationObserver(keepSectorTabsActionable);
+  observer.observe(speed, {attributes: true, attributeFilter: ['disabled']});
+  observer.observe(overtaking, {attributes: true, attributeFilter: ['disabled']});
+  observer.observe(regenerate, {attributes: true, attributeFilter: ['disabled']});
+  keepSectorTabsActionable();
+})();
+</script>
 </body>
 </html>
