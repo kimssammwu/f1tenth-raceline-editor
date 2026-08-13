@@ -88,14 +88,14 @@ def run_online_service(host: str = "127.0.0.1", port: int = 8765, open_browser: 
                     return parts[2]
             return _cookie_value(self.headers.get("Cookie", ""), "raceline_project")
 
-        def proxy_editor(self, key: str, backend_path: str | None = None) -> None:
+        def proxy_editor(self, key: str, backend_path: str | None = None, set_cookie: bool = False) -> None:
             project = projects.get(key)
             if not project:
                 self.send_json({"error": "project not found"}, 404); return
             _, editor_port = project
             parsed = urlparse(self.path)
             target = backend_path if backend_path is not None else parsed.path
-            if parsed.query:
+            if parsed.query and "?" not in target:
                 target += "?" + parsed.query
             body = b""
             if self.command in {"POST", "PUT", "PATCH"}:
@@ -110,6 +110,7 @@ def run_online_service(host: str = "127.0.0.1", port: int = 8765, open_browser: 
                 self.send_response(resp.status)
                 for header, value in resp.getheaders():
                     if header.lower() not in _PROXY_HOP_HEADERS and header.lower() != "content-length": self.send_header(header, value)
+                if set_cookie: self.send_header("Set-Cookie", f"raceline_project={key}; Path=/; SameSite=Lax")
                 self.send_header("Content-Length", str(len(data)))
                 self.send_header("Cache-Control", "no-store")
                 self.end_headers(); self.wfile.write(data)
@@ -128,10 +129,14 @@ def run_online_service(host: str = "127.0.0.1", port: int = 8765, open_browser: 
             if path.startswith("/editor/"):
                 parts = path.split("/"); key = parts[2] if len(parts) > 2 else ""
                 if key not in projects: self.send_json({"error":"project not found"}, 404); return
-                suffix = "/" + "/".join(parts[3:]) if len(parts) > 3 else "/"
-                if suffix == "//": suffix = "/"
+                canonical = f"/editor/{quote(key)}/"
+                if path == f"/editor/{key}":
+                    self.send_response(302); self.send_header("Location", canonical); self.end_headers(); return
+                if path == f"/editor/{key}/":
+                    self.proxy_editor(key, "/", set_cookie=True); return
+                suffix = "/" + "/".join(parts[3:])
                 if parsed.query: suffix += "?" + parsed.query
-                self.send_response(302); self.send_header("Location", f"/editor/{quote(key)}/"); self.send_header("Set-Cookie", f"raceline_project={key}; Path=/; SameSite=Lax"); self.end_headers(); return
+                self.proxy_editor(key, suffix, set_cookie=True); return
             key = self.project_key()
             if key and path in {"/editor.js", "/map.png", "/index.html"}: self.proxy_editor(key); return
             if key and path.startswith("/api/"): self.proxy_editor(key); return
