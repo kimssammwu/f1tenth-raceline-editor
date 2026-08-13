@@ -54,8 +54,8 @@ def cmd_edit(args: argparse.Namespace) -> int:
 
 def cmd_sectors(args: argparse.Namespace) -> int:
     from .sectors import export_sector_files, load_raceline_csv, load_sector_profile
-    map_yaml = args.map.resolve(); raceline_dir = args.raceline_dir.resolve() if args.raceline_dir else (map_yaml.parent / "raceline_offline").resolve(); profile_path = args.profile.resolve() if args.profile else (map_yaml.parent / "edit" / "sectors.json").resolve()
-    raceline = load_raceline_csv(raceline_dir / "raceline_iqp.csv"); profile = load_sector_profile(profile_path, raceline); exported = export_sector_files(map_dir=map_yaml.parent, profile_path=profile_path, raceline=raceline, profile=profile)
+    map_yaml = args.map.resolve(); output_dir = args.raceline_dir.resolve() if args.raceline_dir else (map_yaml.parent / "output").resolve(); profile_path = args.profile.resolve() if args.profile else (map_yaml.parent / "edit" / "sectors.json").resolve()
+    raceline = load_raceline_csv(output_dir / "raceline_iqp.csv"); profile = load_sector_profile(profile_path, raceline); exported = export_sector_files(map_dir=output_dir, profile_path=profile_path, raceline=raceline, profile=profile)
     print(f"Sector profile: {exported.profile_path}\nSpeed sectors: {exported.speed_yaml_path}\nOvertaking sectors: {exported.ot_yaml_path}")
     for warning in exported.warnings: print(f"[{warning['severity'].upper()}] {warning['message']}")
     return 0
@@ -70,7 +70,7 @@ def _write_outputs(out: Path, result) -> None:
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
-    map_yaml = args.map.resolve(); out = args.output_dir.resolve() if args.output_dir else (map_yaml.parent / "raceline_offline").resolve(); out.mkdir(parents=True, exist_ok=True); initial = tuple(args.initial_pose) if args.initial_pose else None
+    map_yaml = args.map.resolve(); out = args.output_dir.resolve() if args.output_dir else (map_yaml.parent / "output").resolve(); out.mkdir(parents=True, exist_ok=True); initial = tuple(args.initial_pose) if args.initial_pose else None
     kwargs = dict(config_dir=args.config_dir, safety_width=args.safety_width, safety_width_sp=args.safety_width_sp, reverse=args.reverse, initial_position=initial, work_dir=out / ".work")
     if args.edit is None:
         result = generate_racelines(map_yaml, **kwargs)
@@ -79,7 +79,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         with materialize_profile(map_yaml, args.edit.resolve()) as edited_map: result = generate_racelines(edited_map.yaml_path, **kwargs)
     _write_outputs(out, result)
     from .upstream_exports import export_upstream_waypoint_json
-    global_waypoints, ltpl_waypoints = export_upstream_waypoint_json(map_yaml.parent, result)
+    global_waypoints, ltpl_waypoints = export_upstream_waypoint_json(out, result)
     summary = {"map": str(map_yaml), "optimizer_commit": UPSTREAM_COMMIT, "config_dir": str((args.config_dir or default_config_dir()).resolve()), "safety_width": args.safety_width, "safety_width_sp": args.safety_width_sp, "reverse": args.reverse, "estimated_lap_time_iqp_s": result.est_lap_time_iqp, "estimated_lap_time_shortest_s": result.est_lap_time_shortest, "outputs": {"centerline": str(out / "centerline.csv"), "raceline_iqp": str(out / "raceline_iqp.csv"), "raceline_shortest": str(out / "raceline_shortest.csv"), "ltpl": str(out / "ltpl.csv"), "bound_right": str(out / "bound_right.csv"), "bound_left": str(out / "bound_left.csv"), "global_waypoints": str(global_waypoints), "ltpl_waypoints": str(ltpl_waypoints)}}
     (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8"); print(json.dumps(summary, indent=2)); return 0
 
@@ -88,9 +88,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="raceline", description="ROS-free F1TENTH raceline generator."); sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("bootstrap", help="Fetch pinned optimizer/config source."); p.add_argument("--force", action="store_true"); p.set_defaults(func=cmd_bootstrap)
     p = sub.add_parser("doctor", help="Check dependencies and optimizer checkout."); p.set_defaults(func=cmd_doctor)
-    p = sub.add_parser("edit", help="Open browser map/raceline/sector editor."); p.add_argument("--map", required=True, type=Path); p.add_argument("--profile", type=Path); p.add_argument("--sector-profile", type=Path); p.add_argument("--raceline-dir", type=Path); p.add_argument("--host", default="127.0.0.1"); p.add_argument("--port", type=int, default=8765); p.add_argument("--no-browser", action="store_true"); p.set_defaults(func=cmd_edit)
-    p = sub.add_parser("sectors", help="Validate/export ROS-compatible sector YAML."); p.add_argument("--map", required=True, type=Path); p.add_argument("--profile", type=Path); p.add_argument("--raceline-dir", type=Path); p.set_defaults(func=cmd_sectors)
-    p = sub.add_parser("generate", help="Generate centerline/racelines and original-stack waypoint JSON."); p.add_argument("--map", required=True, type=Path); p.add_argument("--output-dir", type=Path); p.add_argument("--edit", type=Path); p.add_argument("--config-dir", type=Path); p.add_argument("--safety-width", type=float, default=0.4); p.add_argument("--safety-width-sp", type=float, default=0.35); p.add_argument("--reverse", action="store_true"); p.add_argument("--initial-pose", nargs=3, type=float, metavar=("X", "Y", "YAW")); p.set_defaults(func=cmd_generate)
+    p = sub.add_parser("edit", help="Open browser map/raceline/sector editor."); p.add_argument("--map", required=True, type=Path); p.add_argument("--profile", type=Path); p.add_argument("--sector-profile", type=Path); p.add_argument("--raceline-dir", type=Path, help="Generated output directory. Default: <map-dir>/output"); p.add_argument("--host", default="127.0.0.1"); p.add_argument("--port", type=int, default=8765); p.add_argument("--no-browser", action="store_true"); p.set_defaults(func=cmd_edit)
+    p = sub.add_parser("sectors", help="Validate/export ROS-compatible sector YAML."); p.add_argument("--map", required=True, type=Path); p.add_argument("--profile", type=Path); p.add_argument("--raceline-dir", type=Path, help="Generated output directory. Default: <map-dir>/output"); p.set_defaults(func=cmd_sectors)
+    p = sub.add_parser("generate", help="Generate centerline/racelines and original-stack waypoint JSON."); p.add_argument("--map", required=True, type=Path); p.add_argument("--output-dir", type=Path, help="Output directory. Default: <map-dir>/output"); p.add_argument("--edit", type=Path); p.add_argument("--config-dir", type=Path); p.add_argument("--safety-width", type=float, default=0.4); p.add_argument("--safety-width-sp", type=float, default=0.35); p.add_argument("--reverse", action="store_true"); p.add_argument("--initial-pose", nargs=3, type=float, metavar=("X", "Y", "YAW")); p.set_defaults(func=cmd_generate)
     return parser
 
 
