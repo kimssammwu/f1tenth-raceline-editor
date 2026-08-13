@@ -7,6 +7,7 @@ from typing import Optional
 import cv2
 import numpy as np
 import yaml
+from scipy.interpolate import CubicSpline
 from scipy.signal import savgol_filter
 from skimage.morphology import skeletonize
 from skimage.segmentation import watershed
@@ -112,6 +113,14 @@ def extract_centerline(
 
 
 def smooth_centerline(centerline: np.ndarray) -> np.ndarray:
+    """Smooth a closed centerline without creating an artificial seam.
+
+    Open-ended Savitzky-Golay filtering treats the first and last samples as
+    unrelated boundaries. A racetrack is periodic, so that behavior can create
+    a sharp tangent discontinuity exactly at the contour start index. ``wrap``
+    keeps the filter periodic and makes the result independent of where OpenCV
+    happened to start the contour.
+    """
     n = len(centerline)
     if n < 7:
         return centerline.copy()
@@ -130,16 +139,13 @@ def smooth_centerline(centerline: np.ndarray) -> np.ndarray:
         filter_length -= 1
     filter_length = max(filter_length, 5)
 
-    smoothed = savgol_filter(centerline, filter_length, 3, axis=0)
-
-    half = n // 2
-    shifted = np.append(centerline[half:], centerline[:half], axis=0)
-    shifted_smoothed = savgol_filter(shifted, filter_length, 3, axis=0)
-
-    edge = min(filter_length, half)
-    smoothed[:edge] = shifted_smoothed[half:half + edge]
-    smoothed[-edge:] = shifted_smoothed[half - edge:half]
-    return smoothed
+    return savgol_filter(
+        centerline,
+        filter_length,
+        3,
+        axis=0,
+        mode="wrap",
+    )
 
 
 def compare_direction(alpha: float, beta: float) -> bool:
@@ -147,6 +153,48 @@ def compare_direction(alpha: float, beta: float) -> bool:
     if delta > np.pi:
         delta = 2 * np.pi - delta
     return delta < np.pi / 2
+
+
+def _periodic_resample_closed(points: np.ndarray, step: float) -> np.ndarray:
+    """Resample a closed XY polyline with a periodic cubic spline.
+
+    The returned array intentionally omits a duplicate final point. The closing
+    segment is represented by the last-to-first edge, as expected by the
+    optimizer. Position, first derivative, and second derivative are periodic at
+    the seam, avoiding the curvature spike produced by open-curve interpolation.
+    """
+    pts = np.asarray(points, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        raise ValueError(f"closed points must have shape (N, 2), got {pts.shape}")
+    if len(pts) < 4:
+        raise ValueError("closed centerline needs at least four points")
+    if not np.isfinite(pts).all():
+        raise ValueError("closed centerline contains non-finite coordinates")
+    if step <= 0.0:
+        raise ValueError("resampling step must be positive")
+
+    # Remove consecutive duplicates. Also remove an explicitly duplicated final
+    # sample because CubicSpline(periodic) gets the closure point separately.
+    keep = np.ones(len(pts), dtype=bool)
+    keep[1:] = np.linalg.norm(np.diff(pts, axis=0), axis=1) > 1e-9
+    pts = pts[keep]
+    if len(pts) >= 2 and np.linalg.norm(pts[-1] - pts[0]) <= 1e-9:
+        pts = pts[:-1]
+    if len(pts) < 4:
+        raise ValueError("closed centerline degenerates after duplicate removal")
+
+    closed = np.vstack((pts, pts[0]))
+    seg = np.linalg.norm(np.diff(closed, axis=0), axis=1)
+    if np.any(seg <= 1e-9):
+        raise ValueError("closed centerline contains a degenerate segment")
+    s = np.concatenate(([0.0], np.cumsum(seg)))
+    total = float(s[-1])
+    count = max(8, int(np.ceil(total / step)))
+    sample_s = np.linspace(0.0, total, count, endpoint=False)
+
+    x_spline = CubicSpline(s, closed[:, 0], bc_type="periodic")
+    y_spline = CubicSpline(s, closed[:, 1], bc_type="periodic")
+    return np.column_stack((x_spline(sample_s), y_spline(sample_s)))
 
 
 def centerline_to_meter(
@@ -159,11 +207,9 @@ def centerline_to_meter(
     meter[:, 0] = centerline_smooth[:, 0] * meta.resolution + meta.origin_x
     meter[:, 1] = centerline_smooth[:, 1] * meta.resolution + meta.origin_y
 
-    reftrack = np.column_stack((meter, np.zeros((meter.shape[0], 2))))
-    return helper_funcs_glob.src.interp_track.interp_track(
-        reftrack=reftrack,
-        stepsize_approx=step,
-    )[:, :2]
+    # Do not use the upstream open-curve interpolator for the centerline. The
+    # input is a closed contour and must remain C2-periodic at last->first.
+    return _periodic_resample_closed(meter, step)
 
 
 def orient_centerline(
