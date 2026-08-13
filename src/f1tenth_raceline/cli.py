@@ -48,7 +48,7 @@ def cmd_edit(args: argparse.Namespace) -> int:
 
 def cmd_sectors(args: argparse.Namespace) -> int:
     from .sectors import export_sector_files, load_raceline_csv, load_sector_profile
-    map_yaml=args.map.resolve(); output_dir=args.raceline_dir.resolve() if args.raceline_dir else (map_yaml.parent/"output").resolve(); profile_path=args.profile.resolve() if args.profile else (map_yaml.parent/"edit"/"sectors.json").resolve(); raceline=load_raceline_csv(output_dir/"raceline_iqp.csv"); profile=load_sector_profile(profile_path,raceline); exported=export_sector_files(map_dir=output_dir,profile_path=profile_path,raceline=raceline,profile=profile); print(f"Sector profile: {exported.profile_path}\nSpeed sectors: {exported.speed_yaml_path}\nOvertaking sectors: {exported.ot_yaml_path}"); [print(f"[{w['severity'].upper()}] {w['message']}") for w in exported.warnings]; return 0
+    map_yaml=args.map.resolve(); output_dir=args.raceline_dir.resolve() if args.raceline_dir else (map_yaml.parent / "output").resolve(); profile_path=args.profile.resolve() if args.profile else (map_yaml.parent / "edit" / "sectors.json").resolve(); raceline=load_raceline_csv(output_dir/"raceline_iqp.csv"); profile=load_sector_profile(profile_path,raceline); exported=export_sector_files(map_dir=output_dir,profile_path=profile_path,raceline=raceline,profile=profile); print(f"Sector profile: {exported.profile_path}\nSpeed sectors: {exported.speed_yaml_path}\nOvertaking sectors: {exported.ot_yaml_path}"); [print(f"[{w['severity'].upper()}] {w['message']}") for w in exported.warnings]; return 0
 
 
 def _write_outputs(out: Path, result) -> None:
@@ -56,7 +56,9 @@ def _write_outputs(out: Path, result) -> None:
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
-    map_yaml=args.map.resolve(); out=args.output_dir.resolve() if args.output_dir else (map_yaml.parent/"output").resolve(); out.mkdir(parents=True,exist_ok=True); initial=tuple(args.initial_pose) if args.initial_pose else None; kwargs=dict(config_dir=args.config_dir,safety_width=args.safety_width,safety_width_sp=args.safety_width_sp,reverse=args.reverse,initial_position=initial,work_dir=out/".work")
+    map_yaml=args.map.resolve()
+    out=args.output_dir.resolve() if args.output_dir else (map_yaml.parent / "output").resolve()
+    out.mkdir(parents=True,exist_ok=True); initial=tuple(args.initial_pose) if args.initial_pose else None; kwargs=dict(config_dir=args.config_dir,safety_width=args.safety_width,safety_width_sp=args.safety_width_sp,reverse=args.reverse,initial_position=initial,work_dir=out/".work")
     if args.edit is None: result=generate_racelines(map_yaml,**kwargs)
     else:
         from .edit_model import materialize_profile
