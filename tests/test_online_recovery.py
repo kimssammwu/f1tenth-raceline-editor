@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from f1tenth_raceline.online_recovery import geometric_curvature_closed
+from f1tenth_raceline.online_recovery import _adaptive_width_candidates, geometric_curvature_closed
 
 
 def test_geometric_curvature_closed_circle() -> None:
@@ -18,3 +18,17 @@ def test_geometric_curvature_closed_circle() -> None:
 def test_geometric_curvature_rejects_invalid_shape() -> None:
     with pytest.raises(RuntimeError):
         geometric_curvature_closed(np.zeros((2, 2)))
+
+
+def test_adaptive_width_candidates_consume_margin_only() -> None:
+    values = _adaptive_width_candidates(0.4, 0.3)
+    assert values == [0.375, 0.35, 0.325, 0.3]
+    assert min(values) == 0.3
+
+
+def test_adaptive_width_candidates_never_go_below_vehicle() -> None:
+    assert _adaptive_width_candidates(0.3, 0.3) == []
+    assert _adaptive_width_candidates(0.28, 0.3) == []
+    values = _adaptive_width_candidates(0.34, 0.3)
+    assert values[-1] == 0.3
+    assert all(value >= 0.3 for value in values)
