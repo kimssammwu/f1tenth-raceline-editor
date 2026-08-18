@@ -100,9 +100,15 @@ def _interp_track_upstream(reftrack: np.ndarray, stepsize_approx: float = 0.1) -
 
 
 def _distances(xy: np.ndarray, bound: np.ndarray) -> np.ndarray:
+    points = np.asarray(xy, dtype=float)
     pts = np.asarray(bound, dtype=float)[:, :2]
     if len(pts) == 0:
-        return np.zeros(len(xy), dtype=float)
+        return np.zeros(len(points), dtype=float)
+    if len(pts) == 1:
+        # Real planner bounds are closed contours with many points. Supporting a
+        # single-point bound keeps exporter/unit-test fixtures robust without
+        # changing the upstream algorithm for valid planner output.
+        return np.linalg.norm(points - pts[0], axis=1)
     tmp = np.column_stack((pts, np.zeros((pts.shape[0], 2), dtype=float)))
     dense = _interp_track_upstream(tmp, stepsize_approx=0.1)
     return np.array(
@@ -113,20 +119,13 @@ def _distances(xy: np.ndarray, bound: np.ndarray) -> np.ndarray:
                     + np.power(dense[:, 1] - point[1], 2)
                 )
             )
-            for point in np.asarray(xy, dtype=float)
+            for point in points
         ],
         dtype=float,
     )
 
 
 def _infer_reverse(result: RacelineResult) -> bool:
-    """Infer the upstream reverse-distance swap from the generated centerline widths.
-
-    ``centerline_with_width`` is produced by the same upstream-style distance
-    calculation and already swaps right/left widths for reverse mapping. Comparing
-    it to physical bound distances therefore recovers the reverse flag without
-    changing the public RacelineResult contract.
-    """
     rows = np.asarray(result.centerline_with_width, dtype=float)
     if len(rows) == 0 or rows.shape[1] < 4:
         return False
@@ -273,7 +272,8 @@ def export_upstream_waypoint_json(map_dir: Path, result: RacelineResult) -> tupl
     map_dir.mkdir(parents=True, exist_ok=True)
     map_info_str = map_info_string(result)
     centerline_waypoints, centerline_markers = _centerline(result)
-    reverse = bool(getattr(result, "reverse", _infer_reverse(result)))
+    reverse_value = getattr(result, "reverse", None)
+    reverse = _infer_reverse(result) if reverse_value is None else bool(reverse_value)
     sp_bound_right = getattr(result, "bound_right_sp", None)
     sp_bound_left = getattr(result, "bound_left_sp", None)
     if sp_bound_right is None:
