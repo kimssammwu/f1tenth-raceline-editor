@@ -39,12 +39,6 @@ LTPL_FIELDS = (
 
 
 def _header(frame_id: str = "") -> dict:
-    """Return the ROS 2 std_msgs/Header dictionary used by message_to_ordereddict.
-
-    WpntArray/LtplWpntArray headers are never assigned by the upstream planner, so
-    their default frame_id is empty. Marker headers are explicitly set to ``map``.
-    """
-
     return {"stamp": {"sec": 0, "nanosec": 0}, "frame_id": frame_id}
 
 
@@ -62,8 +56,6 @@ def _marker(
     b: float = 0.0,
     z: float = 0.0,
 ) -> dict:
-    """Build the message_to_ordereddict representation of a default ROS Marker."""
-
     return {
         "header": _header("map"),
         "ns": "",
@@ -81,11 +73,7 @@ def _marker(
         "points": [],
         "colors": [],
         "texture_resource": "",
-        "texture": {
-            "header": _header(),
-            "format": "",
-            "data": [],
-        },
+        "texture": {"header": _header(), "format": "", "data": []},
         "uv_coordinates": [],
         "text": "",
         "mesh_resource": "",
@@ -95,12 +83,7 @@ def _marker(
 
 
 def _interp_track_upstream(reftrack: np.ndarray, stepsize_approx: float = 0.1) -> np.ndarray:
-    """Exact local copy of the pinned upstream helper_funcs_glob interp_track.
-
-    Keeping this tiny routine local avoids importing the ROS/global optimizer package
-    during JSON export while preserving its exact point count and linspace sampling.
-    """
-
+    """Exact local copy of the pinned upstream interp_track implementation."""
     reftrack = np.asarray(reftrack, dtype=float)
     reftrack_cl = np.vstack((reftrack, reftrack[0]))
     el_lengths = np.sqrt(np.sum(np.power(np.diff(reftrack_cl[:, :2], axis=0), 2), axis=1))
@@ -136,6 +119,27 @@ def _distances(xy: np.ndarray, bound: np.ndarray) -> np.ndarray:
     )
 
 
+def _infer_reverse(result: RacelineResult) -> bool:
+    """Infer the upstream reverse-distance swap from the generated centerline widths.
+
+    ``centerline_with_width`` is produced by the same upstream-style distance
+    calculation and already swaps right/left widths for reverse mapping. Comparing
+    it to physical bound distances therefore recovers the reverse flag without
+    changing the public RacelineResult contract.
+    """
+    rows = np.asarray(result.centerline_with_width, dtype=float)
+    if len(rows) == 0 or rows.shape[1] < 4:
+        return False
+    try:
+        raw_right = _distances(rows[:, :2], result.bound_right)
+        raw_left = _distances(rows[:, :2], result.bound_left)
+    except (ValueError, IndexError):
+        return False
+    normal_error = float(np.mean(np.abs(rows[:, 2] - raw_right) + np.abs(rows[:, 3] - raw_left)))
+    reverse_error = float(np.mean(np.abs(rows[:, 2] - raw_left) + np.abs(rows[:, 3] - raw_right)))
+    return reverse_error + 1e-9 < normal_error
+
+
 def _conv_psi(psi: float) -> float:
     new_psi = float(psi) + np.pi / 2.0
     if new_psi > np.pi:
@@ -147,10 +151,14 @@ def _wpnt_array(
     trajectory: np.ndarray,
     bound_right: np.ndarray,
     bound_left: np.ndarray,
+    *,
+    reverse: bool = False,
 ) -> dict:
     trajectory = np.asarray(trajectory, dtype=float)
     d_right = _distances(trajectory[:, 1:3], bound_right)
     d_left = _distances(trajectory[:, 1:3], bound_left)
+    if reverse:
+        d_right, d_left = d_left, d_right
     wpnts = []
     for i, pnt in enumerate(trajectory):
         wpnts.append(
@@ -198,7 +206,6 @@ def _centerline(result: RacelineResult) -> tuple[dict, dict]:
     rows = np.asarray(result.centerline_with_width, dtype=float)
     centerline_coords = rows[:, :2]
     n_points = len(rows)
-
     if n_points < 2:
         psi_centerline = np.zeros(n_points, dtype=float)
         kappa_centerline = np.zeros(n_points, dtype=float)
@@ -208,7 +215,6 @@ def _centerline(result: RacelineResult) -> tuple[dict, dict]:
             el_lengths=0.1 * np.ones(n_points - 1),
             is_closed=False,
         )
-
     wpnts = []
     markers = []
     for i, row in enumerate(rows):
@@ -221,26 +227,13 @@ def _centerline(result: RacelineResult) -> tuple[dict, dict]:
                 "y_m": float(row[1]),
                 "d_right": float(row[2]),
                 "d_left": float(row[3]),
-                # Upstream intentionally does not wrap centerline heading here.
                 "psi_rad": float(psi_centerline[i] + np.pi / 2.0),
                 "kappa_radpm": float(kappa_centerline[i]),
                 "vx_mps": 0.0,
                 "ax_mps2": 0.0,
             }
         )
-        markers.append(
-            _marker(
-                i,
-                row[0],
-                row[1],
-                marker_type=2,
-                sx=0.05,
-                sy=0.05,
-                sz=0.05,
-                b=1.0,
-            )
-        )
-
+        markers.append(_marker(i, row[0], row[1], marker_type=2, sx=0.05, sy=0.05, sz=0.05, b=1.0))
     return {"header": _header(), "wpnts": wpnts}, {"markers": markers}
 
 
@@ -248,34 +241,10 @@ def _bounds_markers(result: RacelineResult) -> dict:
     markers = []
     marker_id = 0
     for pnt in np.asarray(result.bound_right, dtype=float):
-        markers.append(
-            _marker(
-                marker_id,
-                pnt[0],
-                pnt[1],
-                marker_type=2,
-                sx=0.05,
-                sy=0.05,
-                sz=0.05,
-                r=0.5,
-                b=0.5,
-            )
-        )
+        markers.append(_marker(marker_id, pnt[0], pnt[1], marker_type=2, sx=0.05, sy=0.05, sz=0.05, r=0.5, b=0.5))
         marker_id += 1
     for pnt in np.asarray(result.bound_left, dtype=float):
-        markers.append(
-            _marker(
-                marker_id,
-                pnt[0],
-                pnt[1],
-                marker_type=2,
-                sx=0.05,
-                sy=0.05,
-                sz=0.05,
-                r=0.5,
-                g=1.0,
-            )
-        )
+        markers.append(_marker(marker_id, pnt[0], pnt[1], marker_type=2, sx=0.05, sy=0.05, sz=0.05, r=0.5, g=1.0))
         marker_id += 1
     return {"markers": markers}
 
@@ -291,8 +260,6 @@ def _ltpl_array(ltpl: np.ndarray) -> dict:
 
 
 def map_info_string(result: RacelineResult) -> str:
-    # Match the upstream f-string + round(..., 4) formatting exactly. In
-    # particular, round(1.2, 4) becomes "1.2", not "1.2000".
     return (
         f"IQP estimated lap time: {round(float(result.est_lap_time_iqp), 4)}s; "
         f"IQP maximum speed: {round(float(np.amax(result.raceline_iqp[:, 5])), 4)}m/s; "
@@ -304,25 +271,28 @@ def map_info_string(result: RacelineResult) -> str:
 def export_upstream_waypoint_json(map_dir: Path, result: RacelineResult) -> tuple[Path, Path]:
     map_dir = Path(map_dir)
     map_dir.mkdir(parents=True, exist_ok=True)
-
     map_info_str = map_info_string(result)
     centerline_waypoints, centerline_markers = _centerline(result)
+    reverse = bool(getattr(result, "reverse", _infer_reverse(result)))
+    sp_bound_right = getattr(result, "bound_right_sp", None)
+    sp_bound_left = getattr(result, "bound_left_sp", None)
+    if sp_bound_right is None:
+        sp_bound_right = result.bound_right
+    if sp_bound_left is None:
+        sp_bound_left = result.bound_left
 
     global_payload = {
         "map_info_str": {"data": map_info_str},
-        # Upstream assigns the double optimizer value to std_msgs/Float32 first.
         "est_lap_time": {"data": float(np.float32(result.est_lap_time_shortest))},
         "centerline_markers": centerline_markers,
         "centerline_waypoints": centerline_waypoints,
         "global_traj_markers_iqp": _trajectory_markers(result.raceline_iqp),
         "global_traj_wpnts_iqp": _wpnt_array(
-            result.raceline_iqp, result.bound_right, result.bound_left
+            result.raceline_iqp, result.bound_right, result.bound_left, reverse=reverse
         ),
-        "global_traj_markers_sp": _trajectory_markers(
-            result.raceline_shortest, second_traj=True
-        ),
+        "global_traj_markers_sp": _trajectory_markers(result.raceline_shortest, second_traj=True),
         "global_traj_wpnts_sp": _wpnt_array(
-            result.raceline_shortest, result.bound_right, result.bound_left
+            result.raceline_shortest, sp_bound_right, sp_bound_left, reverse=reverse
         ),
         "trackbounds_markers": _bounds_markers(result),
     }
@@ -330,7 +300,6 @@ def export_upstream_waypoint_json(map_dir: Path, result: RacelineResult) -> tupl
         "map_info_str": {"data": map_info_str},
         "ltpl_traj_wpnts": _ltpl_array(result.ltpl),
     }
-
     global_path = map_dir / "global_waypoints.json"
     ltpl_path = map_dir / "ltpl_waypoints.json"
     global_path.write_text(json.dumps(global_payload, indent=2), encoding="utf-8")
