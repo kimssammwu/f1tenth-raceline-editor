@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 from f1tenth_raceline.cli import build_parser
@@ -9,7 +11,15 @@ from f1tenth_raceline.online_service import (
     _parse_multipart,
     _rewrite_editor_body,
     _safe_name,
+    _validate_map_bundle,
 )
+
+
+def _png_bytes() -> bytes:
+    image = np.full((8, 8), 255, dtype=np.uint8)
+    ok, encoded = cv2.imencode(".png", image)
+    assert ok
+    return encoded.tobytes()
 
 
 def test_online_service_cli_does_not_require_map() -> None:
@@ -19,21 +29,66 @@ def test_online_service_cli_does_not_require_map() -> None:
 
 
 def test_safe_upload_names_reject_paths_and_unknown_extensions() -> None:
-    assert _safe_name("nested/map.yaml") == "map.yaml"
+    assert _safe_name("map.yaml") == "map.yaml"
     assert _safe_name("track.pgm") == "track.pgm"
+    with pytest.raises(ValueError):
+        _safe_name("nested/map.yaml")
+    with pytest.raises(ValueError):
+        _safe_name("../map.yaml")
     with pytest.raises(ValueError):
         _safe_name("payload.py")
 
 
-def test_parse_multiple_drag_drop_files() -> None:
+def test_parse_multiple_drag_drop_files_preserves_binary_tail() -> None:
     boundary = "raceline-test"
+    binary = b"PNGDATA---\n-"
     body = (
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"map.yaml\"\r\n\r\nimage: map.png\r\n"
-        f"--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"map.png\"\r\n\r\nPNGDATA\r\n"
-        f"--{boundary}--\r\n"
-    ).encode()
+        b"--" + boundary.encode() + b'\r\nContent-Disposition: form-data; name="files"; filename="map.yaml"\r\n\r\nimage: map.png\r\n'
+        + b"--" + boundary.encode() + b'\r\nContent-Disposition: form-data; name="files"; filename="map.png"\r\n\r\n'
+        + binary + b"\r\n--" + boundary.encode() + b"--\r\n"
+    )
     files = _parse_multipart(body, f"multipart/form-data; boundary={boundary}")
     assert [name for name, _ in files] == ["map.yaml", "map.png"]
+    assert files[1][1] == binary
+
+
+def test_parse_rejects_duplicate_names() -> None:
+    boundary = "dup"
+    body = (
+        b"--dup\r\nContent-Disposition: form-data; name=\"files\"; filename=\"map.yaml\"\r\n\r\na\r\n"
+        b"--dup\r\nContent-Disposition: form-data; name=\"files\"; filename=\"map.yaml\"\r\n\r\nb\r\n"
+        b"--dup--\r\n"
+    )
+    with pytest.raises(ValueError, match="중복"):
+        _parse_multipart(body, f"multipart/form-data; boundary={boundary}")
+
+
+def test_map_bundle_allows_auxiliary_yaml_but_identifies_one_map_yaml() -> None:
+    files = [
+        ("map.yaml", b"image: map.png\nresolution: 0.05\norigin: [0, 0, 0]\n"),
+        ("speed_scaling.yaml", b"n_sectors: 1\nSector0: {start: 0, scaling: 1.0}\n"),
+        ("map.png", _png_bytes()),
+    ]
+    name, meta = _validate_map_bundle(files)
+    assert name == "map.yaml"
+    assert meta["image"] == "map.png"
+
+
+def test_map_bundle_rejects_missing_or_invalid_image() -> None:
+    base = [("map.yaml", b"image: map.png\nresolution: 0.05\norigin: [0, 0, 0]\n")]
+    with pytest.raises(ValueError, match="함께 업로드"):
+        _validate_map_bundle(base)
+    with pytest.raises(ValueError, match="디코딩"):
+        _validate_map_bundle(base + [("map.png", b"not an image")])
+
+
+def test_map_bundle_rejects_nested_yaml_image_path() -> None:
+    files = [
+        ("map.yaml", b"image: images/map.png\nresolution: 0.05\norigin: [0, 0, 0]\n"),
+        ("map.png", _png_bytes()),
+    ]
+    with pytest.raises(ValueError, match="같은 폴더"):
+        _validate_map_bundle(files)
 
 
 def test_online_page_is_utf8_and_uses_same_origin_urls() -> None:
