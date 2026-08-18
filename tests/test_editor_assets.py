@@ -28,11 +28,10 @@ def test_editor_regeneration_is_wired_end_to_end() -> None:
 def test_editor_exposes_progress_and_output_download() -> None:
     root = Path(__file__).parents[1]
     html = (root / "src/f1tenth_raceline/web/index.html").read_text()
-    js = (root / "src/f1tenth_raceline/web/editor.js").read_text()
     server = (root / "src/f1tenth_raceline/editor_server.py").read_text()
     assert 'id="downloadOutputBtn"' in html
     assert 'id="generationProgress"' in html
-    assert "api/regeneration-status" in js
-    assert "api/output.zip" in js
+    assert "api/regeneration-status" in html
+    assert "api/output.zip" in html
     assert 'path == "/api/regeneration-status"' in server
     assert 'path == "/api/output.zip"' in server
