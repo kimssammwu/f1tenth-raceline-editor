@@ -12,8 +12,7 @@
     header strong { margin-right: 10px; }
     button, input { font: inherit; }
     button { background: #222831; color: #e8edf2; border: 1px solid #414955; border-radius: 8px; padding: 8px 11px; cursor: pointer; }
-    button.primary { background: #d7e8ff; color: #101318; border-color: #d7e8ff; }
-    button.active { background: #d7e8ff; color: #101318; border-color: #d7e8ff; }
+    button.primary, button.active { background: #d7e8ff; color: #101318; border-color: #d7e8ff; }
     button:disabled { opacity: .4; cursor: default; }
     .layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; padding: 14px; }
     .viewport { overflow: auto; border: 1px solid #303640; background: #090b0e; min-height: 560px; position: relative; }
@@ -21,63 +20,38 @@
     canvas { display: block; image-rendering: pixelated; }
     #overlay { position: absolute; inset: 0; cursor: crosshair; touch-action: none; }
     aside { border: 1px solid #303640; border-radius: 10px; padding: 14px; align-self: start; background: #171b21; max-height: calc(100vh - 95px); overflow: auto; }
-    .group { margin-bottom: 18px; }
-    .group h3 { margin: 0 0 9px; font-size: 14px; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .group { margin-bottom: 18px; }.group h3 { margin: 0 0 9px; font-size: 14px; }.row { display: flex; gap: 8px; flex-wrap: wrap; }
     label { display: block; font-size: 13px; color: #aab4c0; margin-bottom: 6px; }
     input[type=range], input[type=number] { width: 100%; }
     input[type=number] { background:#0e1116; color:#e8edf2; border:1px solid #414955; border-radius:6px; padding:6px 7px; }
     code { display: block; white-space: pre-wrap; word-break: break-all; background: #0e1116; padding: 9px; border-radius: 7px; color: #bcd6ff; font-size: 12px; }
     #status, #sectorStatus { min-height: 34px; color: #aab4c0; font-size: 13px; white-space: pre-wrap; margin-top: 7px; }
+    .progress { margin-top:9px; padding:9px; border:1px solid #303640; border-radius:7px; background:#0e1116; font-size:12px; color:#b8c1cb; }
+    .progress strong { display:block; color:#e8edf2; margin-bottom:4px; }
     .legend { display: grid; grid-template-columns: 18px 1fr; gap: 6px 8px; align-items: center; font-size: 13px; color: #aab4c0; }
-    .swatch { width: 18px; height: 5px; border-radius: 9px; }
-    .free { background: #4aa3ff; }.occupied { background: #ff5b69; }.center { background: #42e29c; }
-    .sector-card { border:1px solid #303640; border-radius:8px; padding:9px; margin:8px 0; background:#11151a; }
-    .sector-card .title { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:7px; font-size:13px; }
-    .sector-card .meta { color:#8f9aa6; font-size:12px; margin-bottom:7px; }
-    .field-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
-    .check-row { display:flex; gap:12px; flex-wrap:wrap; margin-top:7px; color:#b8c1cb; font-size:12px; }
-    .check-row label { display:flex; align-items:center; gap:5px; margin:0; }
-    .warnings { font-size:12px; display:grid; gap:6px; }
-    .warning { border-left:3px solid #d2a84a; padding:5px 7px; background:#1e1a12; }
-    .error { border-left-color:#ff5b69; background:#251316; }
-    .hint { color:#8f9aa6; font-size:12px; line-height:1.55; }
-    .workflow { border:1px solid #34404d; background:#121820; border-radius:8px; padding:10px; }
-    .workflow strong { font-size:13px; }
-    .hidden { display:none !important; }
+    .swatch { width: 18px; height: 5px; border-radius: 9px; }.free { background: #4aa3ff; }.occupied { background: #ff5b69; }.center { background: #42e29c; }
+    .sector-card { border:1px solid #303640; border-radius:8px; padding:9px; margin:8px 0; background:#11151a; }.sector-card .title { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:7px; font-size:13px; }.sector-card .meta { color:#8f9aa6; font-size:12px; margin-bottom:7px; }
+    .field-grid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }.check-row { display:flex; gap:12px; flex-wrap:wrap; margin-top:7px; color:#b8c1cb; font-size:12px; }.check-row label { display:flex; align-items:center; gap:5px; margin:0; }
+    .warnings { font-size:12px; display:grid; gap:6px; }.warning { border-left:3px solid #d2a84a; padding:5px 7px; background:#1e1a12; }.error { border-left-color:#ff5b69; background:#251316; }
+    .hint { color:#8f9aa6; font-size:12px; line-height:1.55; }.workflow { border:1px solid #34404d; background:#121820; border-radius:8px; padding:10px; }.workflow strong { font-size:13px; }.hidden { display:none !important; }
     @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } aside { order: -1; max-height:none; } }
   </style>
 </head>
 <body>
-<header>
-  <strong>F1TENTH 레이스라인 편집기</strong>
-  <button id="mapModeBtn" class="active">맵 편집</button>
-  <button id="speedModeBtn" disabled>속도 섹터</button>
-  <button id="otModeBtn" disabled>추월 섹터</button>
-  <span style="flex:1"></span>
-  <button id="undoBtn">실행 취소</button>
-  <button id="redoBtn">다시 실행</button>
-</header>
+<header><strong>F1TENTH 레이스라인 편집기</strong><button id="mapModeBtn" class="active">맵 편집</button><button id="speedModeBtn" disabled>속도 섹터</button><button id="otModeBtn" disabled>추월 섹터</button><span style="flex:1"></span><button id="undoBtn">실행 취소</button><button id="redoBtn">다시 실행</button></header>
 <div class="layout">
   <div class="viewport" id="viewport"><div class="stage" id="stage"><canvas id="base"></canvas><canvas id="overlay"></canvas></div></div>
   <aside>
     <div id="mapPanel">
-      <div class="group workflow">
-        <strong>권장 작업 순서</strong>
-        <div class="hint" style="margin-top:6px">1. 브러시로 맵 수정 → 2. 중심선 미리보기 확인 → 3. ‘저장 + 레이스라인 재생성’ → 4. 속도/추월 섹터 조정</div>
-      </div>
-      <div class="group">
-        <h3>맵 브러시</h3>
-        <div class="row"><button id="freeBtn" class="active">주행 가능 영역</button><button id="occupiedBtn">장애물 영역</button><button id="clearBtn">편집 초기화</button></div>
-        <label for="radius" style="margin-top:9px">브러시 반경: <span id="radiusValue">10</span> px</label>
-        <input id="radius" type="range" min="1" max="80" value="10">
-      </div>
+      <div class="group workflow"><strong>권장 작업 순서</strong><div class="hint" style="margin-top:6px">1. 브러시로 맵 수정 → 2. 중심선 미리보기 확인 → 3. ‘저장 + 레이스라인 재생성’ → 4. 결과 ZIP 다운로드 → 5. 속도/추월 섹터 조정</div></div>
+      <div class="group"><h3>맵 브러시</h3><div class="row"><button id="freeBtn" class="active">주행 가능 영역</button><button id="occupiedBtn">장애물 영역</button><button id="clearBtn">편집 초기화</button></div><label for="radius" style="margin-top:9px">브러시 반경: <span id="radiusValue">10</span> px</label><input id="radius" type="range" min="1" max="80" value="10"></div>
       <div class="group"><h3>중심선 미리보기</h3><div class="row"><button id="previewBtn">다시 계산</button><button id="toggleCenterBtn">중심선 숨기기</button></div></div>
       <div class="group">
         <h3>편집 반영</h3>
-        <div class="row"><button id="saveBtn">편집만 저장</button><button id="regenerateBtn" class="primary">저장 + 레이스라인 재생성</button></div>
+        <div class="row"><button id="saveBtn">편집만 저장</button><button id="regenerateBtn" class="primary">저장 + 레이스라인 재생성</button><button id="downloadOutputBtn" disabled>output ZIP 다운로드</button></div>
         <div id="status"></div>
-        <div class="hint">재생성하면 <code style="display:inline;padding:2px 4px">raceline_iqp.csv</code>, 최단경로, 트랙 경계가 새 맵 기준으로 갱신되고 섹터 화면도 자동으로 새로고침됩니다.</div>
+        <div id="generationProgress" class="progress hidden"><strong id="generationStage">대기</strong><span id="generationMessage"></span><div id="generationElapsed" style="margin-top:4px">경과 시간 0.0초</div></div>
+        <div class="hint">재생성 중에는 현재 처리 단계와 경과 시간이 표시됩니다. 완료 후 output 폴더의 CSV, waypoint JSON, YAML, summary.json을 ZIP으로 받을 수 있습니다. 내부 .work 진단 파일은 ZIP에서 제외됩니다.</div>
       </div>
       <div class="group"><h3>터미널 생성 명령</h3><code id="generateCommand">불러오는 중...</code></div>
       <div class="group legend"><span class="swatch free"></span><span>주행 가능 영역으로 강제 지정</span><span class="swatch occupied"></span><span>장애물 영역으로 강제 지정</span><span class="swatch center"></span><span>편집 맵 기준 중심선 미리보기</span></div>
@@ -87,67 +61,11 @@
       <div id="speedGlobals" class="group hidden"><h3>속도 설정</h3><label>전체 속도 상한<input id="globalLimit" type="number" min="0" max="1" step="0.01"></label></div>
       <div id="otGlobals" class="group hidden"><h3>추월 설정</h3><div class="field-grid"><label>Yeet 계수<input id="yeetFactor" type="number" min="0.01" step="0.05"></label><label>스플라인 길이 [wp]<input id="splineLen" type="number" min="1" step="1"></label></div><label style="margin-top:7px">추월 섹터 시작 비율<input id="otSectorBegin" type="number" min="0" max="1" step="0.05"></label></div>
       <div class="group"><div class="row"><button id="saveSectorsBtn" class="primary">섹터 저장 + YAML 내보내기</button><button id="refreshSectorsBtn">레이스라인 다시 불러오기</button></div><div id="sectorStatus"></div></div>
-      <div class="group"><h3>섹터 목록</h3><div id="sectorList"></div></div>
-      <div class="group"><h3>검증 결과</h3><div id="warningList" class="warnings"></div></div>
+      <div class="group"><h3>섹터 목록</h3><div id="sectorList"></div></div><div class="group"><h3>검증 결과</h3><div id="warningList" class="warnings"></div></div>
     </div>
     <div class="group"><h3>화면</h3><label for="zoom">확대/축소: <span id="zoomValue">100</span>%</label><input id="zoom" type="range" min="25" max="300" step="25" value="100"></div>
   </aside>
 </div>
 <script src="/editor.js"></script>
-<script>
-(() => {
-  const speed = document.getElementById('speedModeBtn');
-  const overtaking = document.getElementById('otModeBtn');
-  const regenerate = document.getElementById('regenerateBtn');
-  const status = document.getElementById('status');
-  let allowNativeClick = false;
-
-  function keepSectorTabsActionable() {
-    if (!regenerate.disabled) {
-      speed.disabled = false;
-      overtaking.disabled = false;
-    }
-  }
-
-  function explainAndFocus(message) {
-    status.textContent = message;
-    status.style.color = '#ffb86c';
-    regenerate.focus();
-    regenerate.scrollIntoView({behavior: 'smooth', block: 'center'});
-  }
-
-  async function gateSectorClick(event, kind) {
-    if (allowNativeClick || regenerate.disabled) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    try {
-      const response = await fetch('/api/sectors?t=' + Date.now(), {cache: 'no-store'});
-      const data = await response.json();
-      if (!data.available) {
-        explainAndFocus('섹터 편집에는 레이스라인이 필요합니다. 먼저 “저장 + 레이스라인 재생성”을 실행하세요.');
-        return;
-      }
-      if (kind === 'ot' && !data.shortest_available) {
-        explainAndFocus('추월 섹터에는 최단경로 레이스라인이 필요합니다. 레이스라인 재생성을 완료한 뒤 다시 시도하세요.');
-        return;
-      }
-      allowNativeClick = true;
-      event.currentTarget.click();
-      allowNativeClick = false;
-    } catch (error) {
-      explainAndFocus('섹터 상태 확인 실패: ' + error.message);
-    }
-  }
-
-  speed.addEventListener('click', event => gateSectorClick(event, 'speed'), true);
-  overtaking.addEventListener('click', event => gateSectorClick(event, 'ot'), true);
-
-  const observer = new MutationObserver(keepSectorTabsActionable);
-  observer.observe(speed, {attributes: true, attributeFilter: ['disabled']});
-  observer.observe(overtaking, {attributes: true, attributeFilter: ['disabled']});
-  observer.observe(regenerate, {attributes: true, attributeFilter: ['disabled']});
-  keepSectorTabsActionable();
-})();
-</script>
 </body>
 </html>
