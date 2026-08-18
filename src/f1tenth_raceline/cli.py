@@ -17,6 +17,15 @@ def save_csv(path: Path, arr: np.ndarray, header: str) -> None:
     np.savetxt(path, arr, delimiter=",", header=header, comments="", fmt="%.9f")
 
 
+def _install_optimizer_recovery() -> None:
+    # The recovery is guarded by independent XY-geometry validation and never
+    # relaxes safety width or the configured vehicle curvature limit. Apply it
+    # to every generation entry point so CLI, local GUI, and online GUI behave
+    # identically.
+    from .online_recovery import install_online_optimizer_recovery
+    install_online_optimizer_recovery()
+
+
 def cmd_bootstrap(args: argparse.Namespace) -> int:
     path = ensure_vendor(force=args.force); print(f"Vendor ready: {path}\nPinned commit: {UPSTREAM_COMMIT}\nDefault config: {default_config_dir(path)}"); return 0
 
@@ -35,10 +44,9 @@ def cmd_doctor(_: argparse.Namespace) -> int:
 
 
 def cmd_edit(args: argparse.Namespace) -> int:
+    _install_optimizer_recovery()
     if args.online_service:
         if args.map is not None: raise SystemExit("--online-service 모드에서는 --map을 지정하지 마세요. 브라우저에서 업로드합니다.")
-        from .online_recovery import install_online_optimizer_recovery
-        install_online_optimizer_recovery()
         from .online_service import run_online_service
         run_online_service(host=args.host, port=args.port, open_browser=not args.no_browser); return 0
     if args.map is None: raise SystemExit("edit에는 --map이 필요합니다. 온라인 모드는 --online-service를 사용하세요.")
@@ -56,6 +64,7 @@ def _write_outputs(out: Path, result) -> None:
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
+    _install_optimizer_recovery()
     map_yaml=args.map.resolve()
     out=args.output_dir.resolve() if args.output_dir else (map_yaml.parent / "output").resolve()
     out.mkdir(parents=True,exist_ok=True); initial=tuple(args.initial_pose) if args.initial_pose else None; kwargs=dict(config_dir=args.config_dir,safety_width=args.safety_width,safety_width_sp=args.safety_width_sp,reverse=args.reverse,initial_position=initial,work_dir=out/".work")
