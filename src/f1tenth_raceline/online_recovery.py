@@ -65,6 +65,122 @@ def _adaptive_width_candidates(requested: float, vehicle_width: float, step: flo
     return values
 
 
+def _cross2(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
+
+
+def _boundary_segments(*bounds: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    starts: list[np.ndarray] = []
+    vectors: list[np.ndarray] = []
+    for bound in bounds:
+        pts = np.asarray(bound, dtype=float)
+        if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) < 3:
+            raise RuntimeError(f"track boundary must have shape (N, 2), got {pts.shape}")
+        if not np.all(np.isfinite(pts)):
+            raise RuntimeError("track boundary contains non-finite coordinates")
+        if np.linalg.norm(pts[-1] - pts[0]) <= 1e-9:
+            pts = pts[:-1]
+        nxt = np.roll(pts, -1, axis=0)
+        vec = nxt - pts
+        valid = np.linalg.norm(vec, axis=1) > 1e-9
+        if np.any(valid):
+            starts.append(pts[valid])
+            vectors.append(vec[valid])
+    if not starts:
+        raise RuntimeError("track boundaries contain no usable segments")
+    return np.vstack(starts), np.vstack(vectors)
+
+
+def _ray_distance_to_segments(
+    point: np.ndarray,
+    direction: np.ndarray,
+    starts: np.ndarray,
+    vectors: np.ndarray,
+) -> float | None:
+    """Return the nearest positive ray/segment intersection distance."""
+    d = np.asarray(direction, dtype=float)
+    den = _cross2(np.broadcast_to(d, vectors.shape), vectors)
+    valid = np.abs(den) > 1e-10
+    if not np.any(valid):
+        return None
+
+    rel = starts - point
+    ray_t = np.full(len(starts), np.inf, dtype=float)
+    seg_u = np.full(len(starts), np.nan, dtype=float)
+    ray_t[valid] = _cross2(rel[valid], vectors[valid]) / den[valid]
+    d_valid = np.broadcast_to(d, (int(np.count_nonzero(valid)), 2))
+    seg_u[valid] = _cross2(rel[valid], d_valid) / den[valid]
+    hit = valid & (ray_t >= -1e-9) & (seg_u >= -1e-9) & (seg_u <= 1.0 + 1e-9)
+    if not np.any(hit):
+        return None
+    return max(0.0, float(np.min(ray_t[hit])))
+
+
+def normal_distances_to_bounds(
+    trajectory: np.ndarray,
+    bound_r: np.ndarray,
+    bound_l: np.ndarray,
+    helper_funcs_glob: Any = None,
+    reverse: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Measure right/left clearance along the local centerline normal.
+
+    The old implementation used the globally nearest point on each boundary.
+    That is not a valid track-width measurement on hairpins or nearby parallel
+    sections: a point can be closer to a wall belonging to another part of the
+    track, producing abrupt width jumps and an inconsistent IQP reftrack.
+
+    This implementation intersects rays from every trajectory point with the
+    union of the two closed boundary polylines. The rays follow the local right
+    and left normals, so the measured widths belong to the same cross-section as
+    the centerline point. ``reverse`` is intentionally not used: reversing the
+    trajectory reverses its tangent and therefore swaps its geometric right/left
+    normals automatically.
+    """
+    del helper_funcs_glob, reverse
+    arr = np.asarray(trajectory, dtype=float)
+    pts = arr[:, 1:3] if arr.ndim == 2 and arr.shape[1] > 2 else arr[:, :2]
+    if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) < 3:
+        raise RuntimeError(f"trajectory must provide at least 3 XY points, got {pts.shape}")
+    if not np.all(np.isfinite(pts)):
+        raise RuntimeError("trajectory contains non-finite XY coordinates")
+
+    starts, vectors = _boundary_segments(bound_r, bound_l)
+
+    prev = np.roll(pts, 1, axis=0)
+    nxt = np.roll(pts, -1, axis=0)
+    tangents = nxt - prev
+    norms = np.linalg.norm(tangents, axis=1)
+    bad = norms <= 1e-9
+    if np.any(bad):
+        tangents[bad] = nxt[bad] - pts[bad]
+        norms = np.linalg.norm(tangents, axis=1)
+    if np.any(norms <= 1e-9):
+        raise RuntimeError("trajectory contains a degenerate tangent")
+    tangents /= norms[:, None]
+
+    fallback = np.min(
+        np.linalg.norm(pts[:, None, :] - starts[None, :, :], axis=2),
+        axis=1,
+    )
+    width_right = np.empty(len(pts), dtype=float)
+    width_left = np.empty(len(pts), dtype=float)
+
+    for i, (point, tangent) in enumerate(zip(pts, tangents)):
+        right = np.array([tangent[1], -tangent[0]], dtype=float)
+        left = -right
+        d_right = _ray_distance_to_segments(point, right, starts, vectors)
+        d_left = _ray_distance_to_segments(point, left, starts, vectors)
+        width_right[i] = fallback[i] if d_right is None else d_right
+        width_left[i] = fallback[i] if d_left is None else d_left
+
+    if np.any(width_right <= 1e-6) or np.any(width_left <= 1e-6):
+        width_right = np.where(width_right <= 1e-6, fallback, width_right)
+        width_left = np.where(width_left <= 1e-6, fallback, width_left)
+
+    return width_right, width_left
+
+
 def _validate_final_geometry(result: Any, input_path: str, label: str) -> dict[str, float]:
     """Independently validate XY curvature for every returned optimizer result."""
     from . import optimizer_diagnostics as od
@@ -114,6 +230,8 @@ def install_online_optimizer_recovery() -> None:
 
     if getattr(od, "_online_geometric_recovery_installed", False):
         return
+
+    core.distances_to_bounds = normal_distances_to_bounds
 
     original_validate = od._validate_fallback_result
 
