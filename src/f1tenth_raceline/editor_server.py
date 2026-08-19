@@ -18,6 +18,7 @@ import numpy as np
 
 from .core import extract_centerline, generate_racelines, smooth_centerline
 from .edit_model import apply_profile, load_base_image, load_profile, materialize_profile, normalize_profile, save_profile
+from .editor_diagnostics import clear_optimizer_diagnostics, optimizer_diagnostics_payload
 from .sectors import export_sector_files, load_raceline_csv, load_sector_profile, validate_sector_profile, world_to_pixel
 from .upstream_exports import export_upstream_waypoint_json
 from .vendor import UPSTREAM_COMMIT, default_config_dir
@@ -166,8 +167,9 @@ def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_
     raceline_dir = raceline_dir.resolve() if raceline_dir else (map_yaml.parent / "output").resolve()
     state = EditorState(map_yaml=map_yaml, profile_path=profile_path, sector_profile_path=sector_profile_path, raceline_dir=raceline_dir, base_image=base_image, map_data=map_data, image_path=image_path)
     web_path = Path(__file__).with_name("web") / "index.html"
-    html = web_path.read_bytes()
+    html = web_path.read_bytes().replace(b"</body>", b'<script src="/diagnostics.js"></script></body>')
     editor_js = (web_path.parent / "editor.js").read_bytes()
+    diagnostics_js = (web_path.parent / "diagnostics.js").read_bytes()
     generation_lock = threading.Lock()
     generation_status: dict[str, object] = {"state": "idle", "stage": "idle", "message": "레이스라인 재생성 대기", "started_at": None, "finished_at": None, "error": None}
 
@@ -194,8 +196,17 @@ def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_
         payload["output_available"] = (state.raceline_dir / "summary.json").is_file()
         return payload
 
+    def diagnostics_payload() -> dict:
+        with generation_lock:
+            error = generation_status.get("error")
+        return optimizer_diagnostics_payload(
+            state.raceline_dir / ".work",
+            lambda x, y: _world_xy_to_canvas(state, x, y),
+            error=str(error) if error else None,
+        )
+
     class Handler(BaseHTTPRequestHandler):
-        server_version = "F1TenthRacelineEditor/1.3"
+        server_version = "F1TenthRacelineEditor/1.4"
 
         def log_message(self, fmt: str, *args) -> None:
             print(f"[editor] {self.address_string()} - {fmt % args}")
@@ -226,6 +237,9 @@ def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_
             if path == "/editor.js":
                 self.send_bytes(editor_js, "application/javascript; charset=utf-8")
                 return
+            if path == "/diagnostics.js":
+                self.send_bytes(diagnostics_js, "application/javascript; charset=utf-8")
+                return
             if path == "/map.png":
                 ok, encoded = cv2.imencode(".png", state.base_image)
                 if not ok:
@@ -240,6 +254,9 @@ def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_
                 return
             if path == "/api/regeneration-status":
                 self.send_json(generation_payload())
+                return
+            if path == "/api/optimizer-diagnostics":
+                self.send_json(diagnostics_payload())
                 return
             if path == "/api/output.zip":
                 try:
@@ -273,6 +290,7 @@ def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_
                             self.send_json({"ok": False, "error": "레이스라인 재생성이 이미 진행 중입니다."}, HTTPStatus.CONFLICT)
                             return
                         generation_status.update({"state": "running", "stage": "saving", "message": "맵 편집 내용을 저장하는 중입니다.", "started_at": time.monotonic(), "finished_at": None, "error": None})
+                    clear_optimizer_diagnostics(state.raceline_dir / ".work")
                     try:
                         saved = save_profile(state.profile_path, payload, state.map_yaml, state.base_image)
                         summary = _regenerate_racelines(state, progress=lambda stage, message: set_generation_status(stage=stage, message=message))
@@ -283,7 +301,7 @@ def run_editor(map_yaml: Path, profile_path: Path | None = None, sector_profile_
                         self.send_json({"ok": True, "operations": len(saved["operations"]), "summary": summary, "sectors": sectors, "download_url": "api/output.zip"})
                     except Exception as exc:
                         with generation_lock:
-                            generation_status.update({"state": "failed", "stage": "failed", "message": "레이스라인 재생성에 실패했습니다.", "finished_at": time.monotonic(), "error": str(exc)})
+                            generation_status.update({"state": "failed", "stage": "failed", "message": "레이스라인 재생성에 실패했습니다. 맵에 실패 위치를 표시합니다.", "finished_at": time.monotonic(), "error": str(exc)})
                         raise
                     return
                 if path == "/api/sectors/validate":
